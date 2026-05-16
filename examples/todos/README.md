@@ -1,54 +1,73 @@
 # `examples/todos` — end-to-end MCP example
 
-This is the canonical end-to-end demo for `openapi-gen-go-mcp`. A single binary:
+A realistic end-to-end demo for `openapi-gen-go-mcp`. Two separate binaries:
 
-1. Starts an in-memory HTTP backend that implements [`todos.yaml`](./todos.yaml).
-2. Builds an [`oapi-codegen`](https://github.com/oapi-codegen/oapi-codegen) typed client pointing at that backend.
-3. Registers every operation as an MCP tool and serves them over **stdio**.
-
-No external service, no manual generation, no environment variables — `go run ./examples/todos` is the whole thing.
+- **`todos-server`** — a standalone HTTP service that implements [`todos.yaml`](./todos.yaml) on top of an in-memory store. Listens on `:8080` by default, logs every request, exposes `/healthz`, and shuts down gracefully on `SIGINT` / `SIGTERM`.
+- **`todos-mcp`** — an MCP proxy that speaks JSON-RPC over **stdio** with an MCP host (Claude Desktop, Cursor, …) and forwards every tool call to `todos-server` over HTTP via an [`oapi-codegen`](https://github.com/oapi-codegen/oapi-codegen) typed client.
 
 ```
-                       todos-mcp (one process)
-   ┌────────────────────────────────────────────────────────────┐
-   │                                                            │
-MCP host ─stdio──▶ go-sdk MCP server ─▶ generated MCP layer     │
-(Claude,         (gosdk.NewServer)    (todosmcp.Register…)      │
- Cursor, …)                                  │                  │
-                                             ▼                  │
-                            oapi-codegen typed client            │
-                                             │                  │
-                                             ▼ HTTP             │
-                            in-process httptest.Server (backend.go)
-   └────────────────────────────────────────────────────────────┘
+                                  ┌─────────────────────────────┐
+                                  │       todos-server          │
+                                  │  (cmd: server/, listens     │
+   ┌──── HTTP ─────────────────▶  │   on :8080, in-memory store)│
+   │                              │  GET /todos                 │
+   │                              │  POST /todos                │
+   │                              │  GET/PUT/DELETE /todos/{id} │
+   │                              │  GET /healthz               │
+   │                              └─────────────────────────────┘
+   │
+   │   oapi-codegen typed client (gen/todos)
+   │
+   │
+┌──┴──────────────────────────────┐
+│           todos-mcp             │           ┌──────────────────┐
+│   (cmd: mcp/, MCP proxy)        │  stdio    │   MCP host       │
+│                                 │ ◀──────▶  │ (Claude Desktop, │
+│   generated MCP layer           │ JSON-RPC  │  Cursor, …)      │
+│   (gen/todosmcp)                │           └──────────────────┘
+└─────────────────────────────────┘
 ```
 
 ## Run it
 
+Two terminals (the proxy launches as a child of your MCP host in real use; running it manually is just for smoke-testing).
+
+**Terminal 1 — start the backend:**
+
 ```bash
-# from the repo root
-go run ./examples/todos
+go run ./examples/todos/server
+# 2026/05/16 21:54:33 todos-server listening on :8080
 ```
 
-You should see (on stderr):
+Or build and run:
 
-```
-todos-mcp: started embedded backend at http://127.0.0.1:54321
-todos-mcp serving over stdio (upstream: http://127.0.0.1:54321)
+```bash
+go build -o ./bin/todos-server ./examples/todos/server
+./bin/todos-server                  # default :8080
+./bin/todos-server -addr :9090      # custom port
 ```
 
-…and the process is now waiting for JSON-RPC messages on stdin. Hook it up to an MCP host (see [MCP client config](#mcp-client-config)) or talk to it directly (see [Talk to it without a client](#talk-to-it-without-a-client)).
+**Terminal 2 — start the MCP proxy** (defaults to `TODOS_BASE_URL=http://localhost:8080`):
+
+```bash
+go run ./examples/todos/mcp
+# todos-mcp: upstream http://localhost:8080 reachable
+# todos-mcp serving over stdio (upstream: http://localhost:8080)
+```
+
+The proxy hits `/healthz` once at startup with a 2 s timeout and logs whether the upstream is reachable — a non-fatal warning, so a transient outage doesn't tear down the MCP host.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
 | [`todos.yaml`](./todos.yaml) | OpenAPI 3.0 spec — 5 operations covering path params, query params, JSON request/response bodies. |
+| [`server/main.go`](./server/main.go) | Standalone HTTP server: flag parsing, graceful shutdown, request log middleware. |
+| [`server/store.go`](./server/store.go) | In-memory store + HTTP handlers. |
+| [`mcp/main.go`](./mcp/main.go) | MCP proxy: builds the typed client, probes `/healthz`, registers all tools, serves stdio. |
 | [`gen/todos/oapi.yaml`](./gen/todos/oapi.yaml) | `oapi-codegen` config for the typed HTTP client. |
 | [`gen/todos/todos.gen.go`](./gen/todos/todos.gen.go) | Generated typed client. |
 | [`gen/todosmcp/todosmcp.mcp.go`](./gen/todosmcp/todosmcp.mcp.go) | Generated MCP layer (`RegisterTodosAPIClient`). |
-| [`backend.go`](./backend.go) | Tiny in-memory implementation of the spec. |
-| [`main.go`](./main.go) | Wires the backend, the client, and the MCP server together. |
 
 ## Tools exposed
 
@@ -66,12 +85,18 @@ The exact input schema for each tool is emitted in `gen/todosmcp/todosmcp.mcp.go
 
 ## MCP client config
 
-Build a binary first so the host can launch it directly:
+Build both binaries:
 
 ```bash
-go build -o ./bin/todos-mcp ./examples/todos
-# resulting binary: $(pwd)/bin/todos-mcp
+go build -o ./bin/todos-server ./examples/todos/server
+go build -o ./bin/todos-mcp    ./examples/todos/mcp
 ```
+
+You must start `todos-server` before (or alongside) the MCP host launching `todos-mcp`. Common approaches:
+
+- Run `./bin/todos-server` in a long-lived terminal / `tmux` / systemd unit.
+- Run it under a process supervisor.
+- For a one-machine demo, launch it from your shell's startup file.
 
 Replace `/ABS/PATH/TO/REPO` below with the absolute path to your checkout.
 
@@ -83,7 +108,8 @@ Replace `/ABS/PATH/TO/REPO` below with the absolute path to your checkout.
 {
   "mcpServers": {
     "todos": {
-      "command": "/ABS/PATH/TO/REPO/bin/todos-mcp"
+      "command": "/ABS/PATH/TO/REPO/bin/todos-mcp",
+      "env": { "TODOS_BASE_URL": "http://localhost:8080" }
     }
   }
 }
@@ -94,7 +120,8 @@ Restart Claude Desktop; you should see five `todos` tools in the picker.
 ### Claude Code (CLI)
 
 ```bash
-claude mcp add todos /ABS/PATH/TO/REPO/bin/todos-mcp
+claude mcp add todos /ABS/PATH/TO/REPO/bin/todos-mcp \
+  -e TODOS_BASE_URL=http://localhost:8080
 ```
 
 Or in `.claude/settings.json` / `~/.claude.json`:
@@ -104,7 +131,8 @@ Or in `.claude/settings.json` / `~/.claude.json`:
   "mcpServers": {
     "todos": {
       "command": "/ABS/PATH/TO/REPO/bin/todos-mcp",
-      "type": "stdio"
+      "type": "stdio",
+      "env": { "TODOS_BASE_URL": "http://localhost:8080" }
     }
   }
 }
@@ -118,7 +146,8 @@ Or in `.claude/settings.json` / `~/.claude.json`:
 {
   "mcpServers": {
     "todos": {
-      "command": "/ABS/PATH/TO/REPO/bin/todos-mcp"
+      "command": "/ABS/PATH/TO/REPO/bin/todos-mcp",
+      "env": { "TODOS_BASE_URL": "http://localhost:8080" }
     }
   }
 }
@@ -131,7 +160,8 @@ Or in `.claude/settings.json` / `~/.claude.json`:
   "mcpServers": {
     "todos": {
       "command": "/ABS/PATH/TO/REPO/bin/todos-mcp",
-      "transport": "stdio"
+      "transport": "stdio",
+      "env": { "TODOS_BASE_URL": "http://localhost:8080" }
     }
   }
 }
@@ -139,15 +169,16 @@ Or in `.claude/settings.json` / `~/.claude.json`:
 
 ### Running through `go run` (no build step)
 
-Useful while iterating on the example. Point the host at `go` itself:
+Useful while iterating. Point the host at `go` itself:
 
 ```json
 {
   "mcpServers": {
     "todos": {
       "command": "go",
-      "args": ["run", "./examples/todos"],
-      "cwd": "/ABS/PATH/TO/REPO"
+      "args": ["run", "./examples/todos/mcp"],
+      "cwd": "/ABS/PATH/TO/REPO",
+      "env": { "TODOS_BASE_URL": "http://localhost:8080" }
     }
   }
 }
@@ -157,52 +188,60 @@ Slower to start (Go compiles on first launch) but always picks up local edits.
 
 ### MCP Inspector
 
-For interactive debugging without wiring up a host:
+For interactive debugging without wiring up a host (with `todos-server` already running):
 
 ```bash
-npx @modelcontextprotocol/inspector ./bin/todos-mcp
+TODOS_BASE_URL=http://localhost:8080 npx @modelcontextprotocol/inspector ./bin/todos-mcp
 ```
 
-## Point at an external backend
+## Point at a different host or port
 
-The embedded backend is convenient but ephemeral. To target a real Todos API instead:
+Override `TODOS_BASE_URL`:
 
 ```bash
-TODOS_BASE_URL=https://my-todos.example.com go run ./examples/todos
+# Server on a custom port
+go run ./examples/todos/server -addr :9090
+
+# Proxy talks to it
+TODOS_BASE_URL=http://localhost:9090 go run ./examples/todos/mcp
 ```
 
-When `TODOS_BASE_URL` is set, the `httptest.Server` is skipped and the typed client is configured to hit that URL directly. Anything that conforms to [`todos.yaml`](./todos.yaml) will work.
-
-In MCP-client config, pass it via `env`:
-
-```json
-{
-  "mcpServers": {
-    "todos": {
-      "command": "/ABS/PATH/TO/REPO/bin/todos-mcp",
-      "env": { "TODOS_BASE_URL": "https://my-todos.example.com" }
-    }
-  }
-}
-```
+Anything that conforms to [`todos.yaml`](./todos.yaml) will work — point the proxy at a remote server, a staging environment, etc.
 
 ## Talk to it without a client
 
-You can drive the server straight from a shell — useful for smoke tests and CI:
+Drive the proxy directly from a shell — useful for smoke tests and CI. Start the server in the background first:
 
 ```bash
-( printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'; \
-  sleep 1; \
-  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'; \
-  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'; \
-  sleep 1; \
-  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"listTodos","arguments":{}}}'; \
-  sleep 1; \
-  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"createTodo","arguments":{"body":{"title":"buy milk","completed":false}}}}'; \
-  sleep 1 ) | go run ./examples/todos
+go build -o ./bin/todos-server ./examples/todos/server
+go build -o ./bin/todos-mcp    ./examples/todos/mcp
+
+./bin/todos-server -addr :18080 > /tmp/todos-server.log 2>&1 &
+SERVER_PID=$!
+sleep 0.5
+
+{ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}';
+  sleep 0.5;
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}';
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"listTodos","arguments":{}}}';
+  sleep 0.5;
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"createTodo","arguments":{"body":{"title":"buy milk"}}}}';
+  sleep 0.5; } | TODOS_BASE_URL=http://localhost:18080 ./bin/todos-mcp
+
+kill -TERM $SERVER_PID
+cat /tmp/todos-server.log
 ```
 
-Each `id` correlates a response to its request. The first response is the server's `initialize` result; the second is the full tool catalog; the rest are live tool calls hitting the embedded backend.
+The server log shows every request the proxy forwarded:
+
+```
+todos-server listening on :18080
+GET    /healthz             200 132µs
+GET    /todos               200 96µs
+POST   /todos               201 101µs
+todos-server shutting down
+todos-server stopped
+```
 
 ## Regenerate from the spec
 
@@ -225,13 +264,14 @@ go run ./cmd/openapi-gen-go-mcp \
     -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todos
 ```
 
-The MCP register-function name (`RegisterTodosAPIClient`) is derived from the spec's `info.title` (`Todos API` → `TodosAPI`). Change the title in the spec and `main.go` must follow.
+The MCP register-function name (`RegisterTodosAPIClient`) is derived from the spec's `info.title` (`Todos API` → `TodosAPI`). Change the title and `mcp/main.go` must follow.
 
 ## What to copy from this example
 
 If you're applying this pattern to your own API:
 
-- **Keep `main.go` thin.** The whole point is that the generated code does the work. Aim for: build client → `NewServer` → `Register…Client` → run transport.
-- **Drop the embedded backend.** [`backend.go`](./backend.go) exists only to make the demo self-contained. In a real deployment you delete it and set the base URL to your actual API.
-- **Pick a transport.** This example uses `mcp.StdioTransport{}`. For a network-reachable server, see Pattern 2 in [`docs/usage-patterns.md`](../../docs/usage-patterns.md).
+- **The `mcp/main.go` shell is the whole job.** Build the typed client → `NewServer` → `Register…Client` → run transport. About 30 lines once you strip the upstream probe.
+- **You will not have a `server/`.** It only exists here so the demo is runnable without a real backend. Delete the directory and point `TODOS_BASE_URL` at your actual API.
+- **Health-probe is optional.** [`probeUpstream`](./mcp/main.go) is non-fatal and just gives a clearer stderr line at startup. Drop it if you don't want the dependency on a `/healthz` route.
+- **Pick a transport.** This example uses `mcp.StdioTransport{}`. For a network-reachable proxy, see Pattern 2 in [`docs/usage-patterns.md`](../../docs/usage-patterns.md).
 - **Pick a backend.** Swap `pkg/runtime/gosdk` for `pkg/runtime/mark3labs` with no regeneration — see Pattern 3 in the same doc.

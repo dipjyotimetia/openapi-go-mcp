@@ -18,8 +18,8 @@ import (
 	"time"
 )
 
-// todoStore is intentionally minimal: its job is to give the generated MCP
-// layer a real HTTP backend to talk to, not to be a reference service.
+// todoStore is intentionally minimal: its job is to give the MCP proxy a real
+// HTTP backend to talk to, not to be a reference service.
 type todoStore struct {
 	mu     sync.RWMutex
 	nextID int64
@@ -60,9 +60,7 @@ func (s *todoStore) create(title string, completed bool) storedTodo {
 	return t
 }
 
-func (s *todoStore) handler() http.Handler {
-	mux := http.NewServeMux()
-
+func (s *todoStore) register(mux *http.ServeMux) {
 	mux.HandleFunc("/todos", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -96,8 +94,6 @@ func (s *todoStore) handler() http.Handler {
 			writeError(w, http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed))
 		}
 	})
-
-	return mux
 }
 
 func (s *todoStore) handleList(w http.ResponseWriter, r *http.Request) {

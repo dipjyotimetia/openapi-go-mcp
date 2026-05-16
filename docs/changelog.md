@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **`examples/todos` split into two binaries** — the example is now `examples/todos/server` (a real `net/http` service with `-addr` flag, request log middleware, `/healthz`, and graceful `SIGINT`/`SIGTERM` shutdown) and `examples/todos/mcp` (an MCP proxy that connects via HTTP). The MCP proxy reads `TODOS_BASE_URL` (default `http://localhost:8080`), pings `/healthz` once at startup with a 2 s timeout, and logs a non-fatal warning if unreachable. The previous in-process `httptest.Server` bundling is removed in favour of running the two halves separately, matching how the pattern is actually deployed. The README documents the two-terminal workflow and updated MCP-host configs.
+
+## [0.1.1] — 2026-05-16
+
 ### Added
 
 - **`-prefer-content-type` flag** — when an operation declares multiple request content types, override the default JSON → form → multipart → octet → text → xml priority by naming the spec content type to use. Falls back to the priority order when the preferred type isn't declared on a given op.
@@ -74,5 +80,6 @@ Initial public release.
 - No dynamic (no-codegen, reflection-based) registration path yet. Tracked in `TODO.md`.
 - `discriminator` is dropped during schema conversion — JSON Schema has no direct equivalent.
 
-[Unreleased]: https://github.com/dipjyotimetia/openapi-gen-go-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dipjyotimetia/openapi-gen-go-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/dipjyotimetia/openapi-gen-go-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dipjyotimetia/openapi-gen-go-mcp/releases/tag/v0.1.0
