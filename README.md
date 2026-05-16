@@ -128,6 +128,7 @@ See [`examples/petstore`](examples/petstore) and [`examples/petstore-mark3labs`]
 
 | Directory | What it demonstrates |
 |---|---|
+| [`examples/todos`](examples/todos) | **Canonical end-to-end demo** — embeds an in-memory backend, generated client, and MCP layer in one binary; ships a [README](examples/todos/README.md) with MCP client configs for Claude Desktop, Claude Code, Cursor, VS Code, and Inspector |
 | [`examples/petstore`](examples/petstore) | OpenAPI 3.0, JSON bodies, `go-sdk` backend |
 | [`examples/petstore-mark3labs`](examples/petstore-mark3labs) | Same spec on the `mark3labs/mcp-go` backend |
 | [`examples/swagger2-petstore`](examples/swagger2-petstore) | Swagger 2.0 input via `-emit-v3` conversion |

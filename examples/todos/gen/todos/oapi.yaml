@@ -1,0 +1,5 @@
+package: todos
+generate:
+  models: true
+  client: true
+output: examples/todos/gen/todos/todos.gen.go

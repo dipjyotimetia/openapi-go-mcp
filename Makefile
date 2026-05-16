@@ -78,6 +78,13 @@ regen-examples: build
 	    -package nonjsonmcp \
 	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/non-json-bodies/gen/nonjson
 
+	oapi-codegen -config examples/todos/gen/todos/oapi.yaml examples/todos/todos.yaml
+	$(BIN_DIR)/$(BINARY) \
+	    -spec examples/todos/todos.yaml \
+	    -out examples/todos/gen/todosmcp \
+	    -package todosmcp \
+	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todos
+
 # Quick smoke test: initialise the petstore example MCP server over stdio and list tools.
 smoke: build
 	@( printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'; \

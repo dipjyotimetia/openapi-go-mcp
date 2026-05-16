@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Content-Type header parameter collision warning** — when a spec declares a `Content-Type` header parameter alongside a non-JSON body, the generator now writes a warning to `Options.Warnings` (defaults to stderr) noting the parameter will be overridden by the body's content type.
 - **Non-JSON response decoding** — the generator now picks a wrapper per operation's primary 2xx response: `NewToolResultJSON` for JSON (unchanged), `NewToolResultText` for `text/*`, and a new `NewToolResultBinary([]byte, contentType string) *CallToolResult` for `application/octet-stream`, `application/xml`, and other raw responses. Binary bodies are base64-encoded into `Text` and surfaced as `{"contentType","base64"}` in `StructuredContent`.
 - **CI `examples` job** — runs `make regen-examples` with pinned oapi-codegen v2.7.0 on every push, then `git diff --exit-code` so an unsynced generator change fails CI before merge.
+- **`examples/todos` end-to-end example** — fully self-contained demo: the binary starts an in-memory HTTP backend (`backend.go`), points an oapi-codegen client at it, and serves the generated MCP layer over stdio. Covers GET/POST/PUT/DELETE with path params, query params, and JSON request bodies in one `go run ./examples/todos`. `TODOS_BASE_URL` overrides the embedded backend. Ships a dedicated `examples/todos/README.md` with copy-pasteable MCP client configs for Claude Desktop, Claude Code, Cursor, VS Code, and MCP Inspector.
 
 ### Changed
 
@@ -26,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `make regen-examples` is now idempotent: a second run produces no diff. Previously the oapi-codegen step landed some `*.gen.go` files at the repo root because the `output:` field was a bare filename interpreted relative to cwd.
+- **`Dockerfile` multi-platform COPY** — `dockers_v2` stages binaries under `<os>/<arch>/<binary>` in the build context, but the Dockerfile did a flat `COPY openapi-gen-go-mcp …` and the release docker build failed with `"/openapi-gen-go-mcp": not found`. The Dockerfile now declares `ARG TARGETOS` / `ARG TARGETARCH` (auto-populated by BuildKit) and copies from `${TARGETOS}/${TARGETARCH}/openapi-gen-go-mcp`. Verified locally with `docker buildx build --platform linux/amd64,linux/arm64` against a reproduced goreleaser staging layout.
 
 ## [0.1.0] — 2026-05-16
 
