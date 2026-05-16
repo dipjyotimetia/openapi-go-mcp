@@ -16,10 +16,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi2"
 	"github.com/getkin/kin-openapi/openapi2conv"
@@ -27,14 +30,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Load reads an OpenAPI spec from a file path and returns the kin-openapi v3
-// representation. Swagger 2.0 specs are detected and converted automatically.
-// The returned document is validated.
+// DefaultMaxSpecSize caps how many bytes Load / LoadFromURL will read from a
+// spec source. Specs in the wild are usually <1 MiB; the 32 MiB cap exists
+// purely to keep a stray petabyte URL from exhausting the process.
+const DefaultMaxSpecSize int64 = 32 << 20
+
+// DefaultURLLoadTimeout bounds the HTTP fetch in LoadFromURL when the
+// caller-supplied context has no deadline. It is intentionally generous —
+// fetching a spec is rarely on the hot path.
+const DefaultURLLoadTimeout = 30 * time.Second
+
+// Load reads an OpenAPI spec from a file path or http(s):// URL and returns
+// the kin-openapi v3 representation. Swagger 2.0 specs are detected and
+// converted automatically; the returned document is validated.
+//
+// URLs are fetched with the default HTTP client; see LoadFromURL for
+// caller-controlled transport / size limits.
 func Load(ctx context.Context, path string) (*openapi3.T, error) {
+	if isHTTPURL(path) {
+		return LoadFromURL(ctx, path)
+	}
 	// path is the user-supplied OpenAPI spec — reading it is the function's
 	// entire purpose.
 	raw, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
+		// Surface absolute path + CWD so the user can resolve relative-path
+		// confusion fast.
+		if abs, absErr := filepath.Abs(path); absErr == nil {
+			cwd, _ := os.Getwd()
+			return nil, fmt.Errorf("read %s (resolved to %s; CWD %s): %w", path, abs, cwd, err)
+		}
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
@@ -77,6 +102,120 @@ func Load(ctx context.Context, path string) (*openapi3.T, error) {
 // predicate.
 func IsJSONContentType(ct string) bool {
 	return ct == "application/json" || strings.HasSuffix(ct, "+json")
+}
+
+// URLLoadOption configures LoadFromURL. Defaults are documented on each
+// constructor.
+type URLLoadOption func(*urlLoadConfig)
+
+type urlLoadConfig struct {
+	client      *http.Client
+	maxBodySize int64
+	timeout     time.Duration
+}
+
+// WithHTTPClient overrides the *http.Client used to fetch the spec.
+// Useful for injecting custom transports (proxies, mTLS, auth headers).
+func WithHTTPClient(c *http.Client) URLLoadOption {
+	return func(cfg *urlLoadConfig) { cfg.client = c }
+}
+
+// WithMaxBodySize caps how many bytes the loader will read from the URL.
+// Zero or negative restores DefaultMaxSpecSize.
+func WithMaxBodySize(n int64) URLLoadOption {
+	return func(cfg *urlLoadConfig) { cfg.maxBodySize = n }
+}
+
+// WithTimeout sets a fetch deadline when the caller-supplied context has
+// none. Zero restores DefaultURLLoadTimeout.
+func WithTimeout(d time.Duration) URLLoadOption {
+	return func(cfg *urlLoadConfig) { cfg.timeout = d }
+}
+
+func isHTTPURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// LoadFromURL fetches an OpenAPI spec from an http(s):// URL, decodes it
+// (auto-detecting Swagger 2.0 vs OpenAPI 3.x), and validates the result.
+// The returned document carries no remembered URL — external $refs in the
+// spec are resolved against the file:// origin kin-openapi defaults to when
+// no base URL is set; specs that rely on URL-relative refs should be saved
+// locally first.
+func LoadFromURL(ctx context.Context, rawURL string, opts ...URLLoadOption) (*openapi3.T, error) {
+	cfg := urlLoadConfig{
+		maxBodySize: DefaultMaxSpecSize,
+		timeout:     DefaultURLLoadTimeout,
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if cfg.maxBodySize <= 0 {
+		cfg.maxBodySize = DefaultMaxSpecSize
+	}
+	if cfg.client == nil {
+		cfg.client = http.DefaultClient
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse spec URL %q: %w", rawURL, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported scheme %q (only http(s):// is supported here)", parsed.Scheme)
+	}
+
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && cfg.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cfg.timeout)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json, application/yaml;q=0.9, */*;q=0.5")
+
+	resp, err := cfg.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", rawURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch %s: HTTP %d", rawURL, resp.StatusCode)
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, cfg.maxBodySize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(raw)) > cfg.maxBodySize {
+		return nil, fmt.Errorf("spec body exceeds %d bytes (set WithMaxBodySize to raise)", cfg.maxBodySize)
+	}
+
+	if isSwagger2(raw) {
+		doc, err := convertSwagger2(raw)
+		if err != nil {
+			return nil, fmt.Errorf("convert swagger 2.0: %w", err)
+		}
+		if err := doc.Validate(ctx); err != nil {
+			return nil, fmt.Errorf("validate converted v3: %w", err)
+		}
+		return doc, nil
+	}
+
+	l := openapi3.NewLoader()
+	l.IsExternalRefsAllowed = true
+	l.Context = ctx
+	doc, err := l.LoadFromDataWithPath(raw, parsed)
+	if err != nil {
+		return nil, fmt.Errorf("parse openapi: %w", err)
+	}
+	if err := doc.Validate(ctx); err != nil {
+		return nil, fmt.Errorf("validate openapi: %w", err)
+	}
+	return doc, nil
 }
 
 // WriteV3YAMLJSONOnly serialises doc as OpenAPI 3.x YAML, with non-JSON

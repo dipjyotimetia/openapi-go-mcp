@@ -45,20 +45,44 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 		RawOutputSchema: tool.RawOutputSchema,
 	}
 	a.s.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		result, err := handler(ctx, &runtime.CallToolRequest{
-			Arguments: req.GetArguments(),
-		})
+		// mark3labs deserialises Arguments to map[string]any when the wire
+		// shape allows; route through runtime.DecodeArguments so malformed
+		// or exotic inputs (e.g. a raw string accidentally passed) yield the
+		// same IsError result the gosdk adapter produces.
+		args, err := runtime.DecodeArguments(req.Params.Arguments)
+		if err != nil {
+			toolResult, _ := runtime.HandleError(err)
+			return toMCPResult(toolResult), nil
+		}
+
+		result, err := handler(ctx, &runtime.CallToolRequest{Arguments: args})
 		if err != nil {
 			return nil, err
 		}
 		if result == nil {
 			return nil, nil
 		}
-		if result.IsError {
-			return mcp.NewToolResultError(result.Text), nil
-		}
-		res := mcp.NewToolResultText(result.Text)
-		res.StructuredContent = result.StructuredContent
-		return res, nil
+		return toMCPResult(result), nil
 	})
+}
+
+func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
+	if result == nil {
+		return nil
+	}
+	var res *mcp.CallToolResult
+	if result.IsError {
+		res = mcp.NewToolResultError(result.Text)
+	} else {
+		res = mcp.NewToolResultText(result.Text)
+	}
+	res.StructuredContent = result.StructuredContent
+	if meta := runtime.BuildHTTPMeta(result); meta != nil {
+		res.Meta = &mcp.Meta{
+			AdditionalFields: map[string]any{
+				runtime.HTTPMetaKey: meta,
+			},
+		}
+	}
+	return res
 }

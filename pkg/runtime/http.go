@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/textproto"
 	"sort"
@@ -34,6 +35,7 @@ func DecodeField(args map[string]any, key string, out any) error {
 			Status:  400,
 			Code:    "invalid_argument",
 			Message: fmt.Sprintf("marshal %q: %v", key, err),
+			Cause:   err,
 		}
 	}
 	if err := json.Unmarshal(buf, out); err != nil {
@@ -41,6 +43,7 @@ func DecodeField(args map[string]any, key string, out any) error {
 			Status:  400,
 			Code:    "invalid_argument",
 			Message: fmt.Sprintf("decode %q: %v", key, err),
+			Cause:   err,
 		}
 	}
 	return nil
@@ -49,6 +52,29 @@ func DecodeField(args map[string]any, key string, out any) error {
 // DecodeBody is a convenience wrapper for the conventional "body" key.
 func DecodeBody(args map[string]any, out any) error {
 	return DecodeField(args, "body", out)
+}
+
+// DecodeCookieParam JSON-decodes args["cookie"][name] into out. Missing or
+// absent cookie groups are not errors — cookies are optional unless the spec
+// marks them required, and the generated input schema enforces that at the
+// MCP boundary.
+func DecodeCookieParam(args map[string]any, name string, out any) error {
+	cookies, _ := args["cookie"].(map[string]any)
+	if cookies == nil {
+		return nil
+	}
+	v, ok := cookies[name]
+	if !ok || v == nil {
+		return nil
+	}
+	buf, err := json.Marshal(v)
+	if err != nil {
+		return &ToolError{Status: 400, Code: "invalid_cookie_param", Message: err.Error(), Cause: err}
+	}
+	if err := json.Unmarshal(buf, out); err != nil {
+		return &ToolError{Status: 400, Code: "invalid_cookie_param", Message: fmt.Sprintf("decode cookie %q: %v", name, err), Cause: err}
+	}
+	return nil
 }
 
 // DecodePathParam JSON-decodes args["path"][name] into out.
@@ -74,10 +100,10 @@ func DecodePathParam(args map[string]any, name string, out any) error {
 	}
 	buf, err := json.Marshal(v)
 	if err != nil {
-		return &ToolError{Status: 400, Code: "invalid_path_param", Message: err.Error()}
+		return &ToolError{Status: 400, Code: "invalid_path_param", Message: err.Error(), Cause: err}
 	}
 	if err := json.Unmarshal(buf, out); err != nil {
-		return &ToolError{Status: 400, Code: "invalid_path_param", Message: fmt.Sprintf("decode path %q: %v", name, err)}
+		return &ToolError{Status: 400, Code: "invalid_path_param", Message: fmt.Sprintf("decode path %q: %v", name, err), Cause: err}
 	}
 	return nil
 }
@@ -100,24 +126,20 @@ func DecodeHeaderParams(args map[string]any, out any) error {
 func DecodeParamsCombined(args map[string]any, out any) error {
 	merged := map[string]any{}
 	if q, ok := args["query"].(map[string]any); ok {
-		for k, v := range q {
-			merged[k] = v
-		}
+		maps.Copy(merged, q)
 	}
 	if h, ok := args["header"].(map[string]any); ok {
-		for k, v := range h {
-			merged[k] = v
-		}
+		maps.Copy(merged, h)
 	}
 	if len(merged) == 0 {
 		return nil
 	}
 	buf, err := json.Marshal(merged)
 	if err != nil {
-		return &ToolError{Status: 400, Code: "invalid_argument", Message: err.Error()}
+		return &ToolError{Status: 400, Code: "invalid_argument", Message: err.Error(), Cause: err}
 	}
 	if err := json.Unmarshal(buf, out); err != nil {
-		return &ToolError{Status: 400, Code: "invalid_argument", Message: "decode params: " + err.Error()}
+		return &ToolError{Status: 400, Code: "invalid_argument", Message: "decode params: " + err.Error(), Cause: err}
 	}
 	return nil
 }

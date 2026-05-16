@@ -6,7 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed
+### Added — robustness pass (Phase 1–4)
+
+- **`runtime.NewToolResultFromHTTP(status, header, body, fallbackContentType)`** — canonical wrapper that preserves the upstream HTTP status code and a curated allowlist of response headers (`Location`, `ETag`, `Last-Modified`, `Cache-Control`, `Content-Type`, `Content-Disposition`, `Content-Language`, `Retry-After`, `WWW-Authenticate`, `Link`, plus up to 32 `X-*` headers) on `*CallToolResult`. JSON bodies surface as `StructuredContent` (unchanged shape); `text/*` bodies surface as `{"contentType","text"}`; binary bodies surface as `{"contentType","base64"}`; 204 / empty bodies surface as success with no `StructuredContent`; non-2xx responses become `IsError=true` with a `{"status","headers","body"}` envelope. Generated handlers now call this helper for every operation, so MCP clients can distinguish 201 + `Location` from 200, 304 from 200, etc.
+- **`CallToolResult.StatusCode` + `CallToolResult.Headers`** — additive struct fields. Zero values when not from an HTTP round-trip; existing handlers that build the struct directly continue to compile.
+- **Cookie parameter support** — `in: cookie` parameters are now first-class: exposed in the tool's input schema under a `cookie` group, decoded via `runtime.DecodeCookieParam`, and forwarded to the upstream client through a new `runtime.CookieRequestEditor` that satisfies oapi-codegen's `RequestEditorFn`.
+- **`runtime.WithHTTPClient`, `runtime.WithRequestTimeout`, `runtime.WithServerVariables`** — option groundwork user code can call from `Register*` opts to customise the upstream HTTP client, set a per-tool-call deadline, and supply substitutions for OpenAPI server-URL templates.
+- **`runtime.SubstituteServerVariables(template, vars)`** — helper to expand `{name}` placeholders in OpenAPI server URLs at runtime.
+- **`runtime.DecodeArguments`** — shared argument decoder used by both adapters so the gosdk and mark3labs paths surface identical error semantics on malformed input.
+- **`runtime.BuildHTTPMeta` + `runtime.HTTPMetaKey`** — adapters serialise the new HTTP status + headers onto the underlying SDK's `_meta` channel (go-sdk `Meta`, mark3labs `Meta.AdditionalFields`) under `openapi-gen-go-mcp/http`, so MCP clients can read both regardless of which SDK is wired up.
+- **`ExtraProperty.Type`** — extra-property declarations may now request `number`, `integer`, or `boolean` shapes in addition to the previous string-only path. Unknown types fall back to string rather than emit invalid schema.
+- **Structured generator diagnostics** — `generator.CollectOperations` and `generator.Generate` now return `[]Diagnostic` alongside the error. Stable `Code` values (`dropped-callback`, `unsupported-parameter-style`, `shadowed-parameter`, `dropped-server-variables`, `dropped-security-requirement`, `content-type-header-override`, …) make findings machine-readable; the legacy `Options.Warnings` stream is preserved.
+- **`-warnings-as-errors` CLI flag** — exit code `4` when any warning-level diagnostic fires, useful for failing CI on spec regressions.
+- **Distinct CLI exit codes** — `0` ok / `1` usage / `2` bad input / `3` generation failure / `4` warnings-as-errors. CI pipelines can branch on the code.
+- **URL-based spec loading** — `loader.Load` now dispatches `http(s)://` paths to `loader.LoadFromURL(ctx, url, opts...)`, which enforces a 32 MiB body cap and a 30 s timeout (both `URLLoadOption`-configurable). The CLI's `-spec` flag accepts URLs without any extra ceremony.
+- **`loader.URLLoadOption` knobs** — `WithHTTPClient`, `WithMaxBodySize`, `WithTimeout` for custom transports / proxies / mTLS / auth headers.
+- **Collision detection at codegen time** — `Render` rejects `ClientImport` paths whose base segment collides with Go reserved words or with packages the generated file already imports (`context`, `json`, `runtime`), and refuses operations whose `ToolName`s mangle to the same const identifier (`get-pet` vs `get_pet` would have silently produced duplicate decls).
+- **CWD-robust e2e tests** — `internal/e2e/cli_test.go` now walks up looking for `go.mod` instead of assuming a fixed depth.
+- **`make smoke-all`** — exercises both the gosdk and mark3labs backends so adapter parity is verified at the protocol layer.
+
+### Changed — robustness pass (Phase 1–4)
+
+- **`runtime.HandleError` JSON-marshal fallback is no longer recursive** — when the inner payload fails to encode, the helper synthesises a fixed-shape error string with `fmt.Sprintf` and returns; previously the fallback could re-enter the encoder.
+- **`runtime.ToolError`** gained a `Cause error` field and an `Unwrap()` method, so callers can `errors.Is`/`errors.As` to inspect the underlying parse/decode failure. All call sites in `pkg/runtime/http.go` were updated to populate it.
+- **Adapter parity** — `pkg/runtime/gosdk` and `pkg/runtime/mark3labs` route through the shared `DecodeArguments` helper, so the same MCP `arguments` payload yields the same `*runtime.CallToolResult` regardless of which backend is loaded. The gosdk adapter no longer surfaces malformed-input parses as protocol errors; both now produce an `IsError` tool result the LLM can self-correct from.
+- **`generator.CollectOperations` signature** — now returns `([]Operation, []Diagnostic, error)`. Internal callers (`Render`, `Generate`) plumb the diagnostics through; the CLI prints them grouped by severity. The `Options.Warnings` `io.Writer` continues to receive a free-form line per finding for backwards compatibility.
+- **`generator.Generate` signature** — now returns `([]Diagnostic, error)`.
+- **Generated handlers** — every operation's success path now reads `resp.HTTPResponse.Header` via a small `headerOf(*http.Response)` helper emitted into the file and routes through `runtime.NewToolResultFromHTTP`. Out-of-tree code that pattern-matched on the previous `runtime.NewToolResultJSON(resp.Body)`/`NewToolResultBinary`/`NewToolResultText` lines must rerun the generator.
+- **`callArgs` template helper** — returns `(string, error)` instead of panicking on an unhandled body kind; `Render` now surfaces the failure cleanly.
+- **Loader file-read errors include the absolute path + CWD** so relative-path confusion is debuggable from a single line.
+- **CLAUDE.md** — Go-version reference updated to match `go.mod` (1.26.x) and the current CI matrix.
+
+### Earlier (Phase 0)
 
 - **`examples/todos` split into two binaries** — the example is now `examples/todos/server` (a real `net/http` service with `-addr` flag, request log middleware, `/healthz`, and graceful `SIGINT`/`SIGTERM` shutdown) and `examples/todos/mcp` (an MCP proxy that connects via HTTP). The MCP proxy reads `TODOS_BASE_URL` (default `http://localhost:8080`), pings `/healthz` once at startup with a 2 s timeout, and logs a non-fatal warning if unreachable. The previous in-process `httptest.Server` bundling is removed in favour of running the two halves separately, matching how the pattern is actually deployed. The README documents the two-terminal workflow and updated MCP-host configs.
 

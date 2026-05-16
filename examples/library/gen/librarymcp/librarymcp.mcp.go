@@ -6,6 +6,7 @@ package librarymcp
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/library/gen/library"
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"
@@ -14,6 +15,7 @@ import (
 // _ silences "imported and not used" when an operation set omits some helpers.
 var _ = json.RawMessage(nil)
 var _ context.Context = nil
+var _ http.Header = nil
 
 // Compile-time check: the imported package must expose the expected client
 // interface. Generated code targets the typed-response variant by default.
@@ -46,7 +48,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
-			return runtime.NewToolResultJSON(resp.Body), nil
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
 		},
 	)
 
@@ -69,7 +76,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
-			return runtime.NewToolResultJSON(resp.Body), nil
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
 		},
 	)
 
@@ -96,7 +108,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
-			return runtime.NewToolResultJSON(resp.Body), nil
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
 		},
 	)
 
@@ -119,7 +136,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
-			return runtime.NewToolResultJSON(resp.Body), nil
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"",
+			), nil
 		},
 	)
 
@@ -142,10 +164,26 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
-			return runtime.NewToolResultJSON(resp.Body), nil
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
 		},
 	)
 
+}
+
+// headerOf returns r.Header when r is non-nil; returns nil otherwise so the
+// runtime helper can use its fallback Content-Type. Generated code uses this
+// instead of dereferencing resp.HTTPResponse directly because some oapi-
+// codegen responses can carry a nil *http.Response (e.g. test fakes).
+func headerOf(r *http.Response) http.Header {
+	if r == nil {
+		return nil
+	}
+	return r.Header
 }
 
 const input_getAuthor = `{

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -27,6 +28,13 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Printf("todos-server: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	addr := flag.String("addr", ":8080", "address to listen on")
 	flag.Parse()
 
@@ -61,9 +69,10 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("shutdown: %v", err)
+		return fmt.Errorf("shutdown: %w", err)
 	}
 	log.Printf("todos-server stopped")
+	return nil
 }
 
 func logRequests(next http.Handler) http.Handler {

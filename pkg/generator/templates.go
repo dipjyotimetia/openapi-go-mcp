@@ -26,6 +26,7 @@ package {{.PackageName}}
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 {{range .ExtraImports}}	{{.}}
 {{end}}
 	"{{.ClientImport}}"
@@ -35,6 +36,7 @@ import (
 // _ silences "imported and not used" when an operation set omits some helpers.
 var _ = json.RawMessage(nil)
 var _ context.Context = nil
+var _ http.Header = nil
 
 // Compile-time check: the imported package must expose the expected client
 // interface. Generated code targets the typed-response variant by default.
@@ -97,6 +99,19 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 			}
 			{{- end}}
 			{{- end}}
+			{{- if .CookieParams}}
+			cookieValues := runtime.CookieValues{}
+			{{- range .CookieParams}}
+			{
+				var v string
+				if err := runtime.DecodeCookieParam(req.Arguments, "{{.Name}}", &v); err != nil {
+					return runtime.HandleError(err)
+				}
+				cookieValues["{{.Name}}"] = v
+			}
+			{{- end}}
+			cookieEditor := runtime.CookieRequestEditor(cookieValues)
+			{{- end}}
 			resp, err := c.{{.CallMethod}}(ctx{{callArgs .}})
 			if err != nil {
 				return runtime.HandleError(err)
@@ -104,16 +119,26 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
-			{{- if eq .ResponseKind "text"}}
-			return runtime.NewToolResultText(string(resp.Body)), nil
-			{{- else if eq .ResponseKind "octet" "raw"}}
-			return runtime.NewToolResultBinary(resp.Body, {{quote .ResponseContentType}}), nil
-			{{- else}}
-			return runtime.NewToolResultJSON(resp.Body), nil
-			{{- end}}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				{{quote .ResponseContentType}},
+			), nil
 		},
 	)
 	{{end}}
+}
+
+// headerOf returns r.Header when r is non-nil; returns nil otherwise so the
+// runtime helper can use its fallback Content-Type. Generated code uses this
+// instead of dereferencing resp.HTTPResponse directly because some oapi-
+// codegen responses can carry a nil *http.Response (e.g. test fakes).
+func headerOf(r *http.Response) http.Header {
+	if r == nil {
+		return nil
+	}
+	return r.Header
 }
 
 {{range .Ops}}
@@ -194,15 +219,21 @@ func fileFieldsLit(parts []RequestFilePart) string {
 }
 
 // callArgs renders the positional argument list passed to the oapi-codegen
-// client method, after the leading ctx argument. Order: path params (positional)
-// → params struct (pointer) if any → body args (kind-specific) if any.
+// client method, after the leading ctx argument. Order: path params
+// (positional) → params struct (pointer) if any → body args (kind-specific)
+// if any.
 //
 // Body-arg shape by kind:
 //   - JSON, Form     : "body"                   (typed value)
 //   - Multipart      : "contentType, body"      (local vars from BuildMultipartBody)
 //   - Octet          : `"application/octet-stream", body`
 //   - Text, Raw      : `"<spec content type>", body`
-func callArgs(op Operation) string {
+//
+// Returns an error rather than panicking when a BodyKind isn't handled —
+// the text/template engine surfaces template-function errors through
+// Execute, so a bug here fails Render() cleanly instead of producing
+// broken Go that crashes downstream.
+func callArgs(op Operation) (string, error) {
 	var parts []string
 	for _, p := range op.PathParams {
 		parts = append(parts, p.GoVar)
@@ -221,15 +252,19 @@ func callArgs(op Operation) string {
 		case BodyText, BodyRaw:
 			parts = append(parts, strconv.Quote(op.RequestContentType), "body")
 		default:
-			// Unreachable: every BodyKind set by pickRequestContent is handled
-			// above. Panic at generation time rather than emit broken Go.
-			panic(fmt.Sprintf("callArgs: unhandled BodyKind %q on operation %s", op.RequestBodyKind, op.GoName))
+			return "", fmt.Errorf("callArgs: unhandled BodyKind %q on operation %s", op.RequestBodyKind, op.GoName)
 		}
 	}
-	if len(parts) == 0 {
-		return ""
+	if len(op.CookieParams) > 0 {
+		// CookieParams flow through oapi-codegen's variadic ...RequestEditorFn
+		// tail. The editor closure is declared by the template alongside the
+		// cookie decoding it depends on.
+		parts = append(parts, "cookieEditor")
 	}
-	return ", " + strings.Join(parts, ", ")
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return ", " + strings.Join(parts, ", "), nil
 }
 
 func goQuote(s string) string {

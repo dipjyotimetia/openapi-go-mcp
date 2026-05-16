@@ -11,6 +11,7 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 // ToolError represents an MCP tool error that should be surfaced as a tool
@@ -24,9 +25,16 @@ type ToolError struct {
 	Code string
 	// Message is the human-readable failure description.
 	Message string
+	// Cause is the original error, preserved so callers can use errors.Is /
+	// errors.As to inspect underlying causes (e.g. json.SyntaxError). Nil for
+	// errors that originate inside the runtime helpers themselves.
+	Cause error
 }
 
 func (e *ToolError) Error() string { return e.Message }
+
+// Unwrap exposes the wrapped cause to errors.Is / errors.As.
+func (e *ToolError) Unwrap() error { return e.Cause }
 
 // HandleError converts any error to a tool result. The error itself is never
 // propagated as a protocol error — instead it is JSON-encoded into the result
@@ -53,7 +61,13 @@ func HandleError(err error) (*CallToolResult, error) {
 
 	body, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
-		return NewToolResultError("error: " + err.Error()), nil
+		// The payload is built from primitive Go types (string / int) above, so
+		// json.Marshal failing here is extraordinary (e.g. a *ToolError whose
+		// Message contained a value the encoder reflected into and rejected).
+		// Synthesise a stable fixed-shape string without re-invoking the
+		// encoder so we never recurse through HandleError.
+		fallback := fmt.Sprintf(`{"error":%q,"marshal_error":%q}`, err.Error(), marshalErr.Error())
+		return NewToolResultError(fallback), nil
 	}
 	return NewToolResultError(string(body)), nil
 }

@@ -14,7 +14,6 @@ package gosdk
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -50,14 +49,14 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 	}
 
 	a.s.AddTool(mt, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		var args map[string]any
-		if len(req.Params.Arguments) > 0 {
-			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-				return nil, err
-			}
-		}
-		if args == nil {
-			args = make(map[string]any)
+		args, err := runtime.DecodeArguments(req.Params.Arguments)
+		if err != nil {
+			// Mirror the mark3labs path: malformed input becomes an
+			// IsError tool result so the LLM can self-correct instead of
+			// the transport surfacing a protocol error the client may not
+			// surface back.
+			toolResult, _ := runtime.HandleError(err)
+			return toMCPResult(toolResult), nil
 		}
 
 		result, err := handler(ctx, &runtime.CallToolRequest{Arguments: args})
@@ -67,10 +66,23 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 		if result == nil {
 			return nil, nil
 		}
-		return &mcp.CallToolResult{
-			Content:           []mcp.Content{&mcp.TextContent{Text: result.Text}},
-			StructuredContent: result.StructuredContent,
-			IsError:           result.IsError,
-		}, nil
+		return toMCPResult(result), nil
 	})
+}
+
+func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
+	if result == nil {
+		return nil
+	}
+	out := &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: result.Text}},
+		StructuredContent: result.StructuredContent,
+		IsError:           result.IsError,
+	}
+	if meta := runtime.BuildHTTPMeta(result); meta != nil {
+		out.Meta = mcp.Meta{
+			runtime.HTTPMetaKey: meta,
+		}
+	}
+	return out
 }

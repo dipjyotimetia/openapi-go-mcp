@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"io"
 	"os"
 	"path"
@@ -25,44 +26,58 @@ import (
 )
 
 // generate is the worker called by the exported Generate; it does all the
-// rendering, formats the result with gofmt, and writes it to disk.
-func generate(doc *openapi3.T, opts Options) error {
-	src, err := Render(doc, opts)
+// rendering, formats the result with gofmt, and writes it to disk. It
+// returns the diagnostics collected during rendering so the CLI can surface
+// them after a successful write.
+func generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
+	src, diags, err := RenderWithDiagnostics(doc, opts)
 	if err != nil {
-		return err
+		return diags, err
 	}
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
+		return diags, fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
 	}
 	outPath := filepath.Join(opts.OutDir, opts.PackageName+".mcp.go")
 	if err := os.WriteFile(outPath, src, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", outPath, err)
+		return diags, fmt.Errorf("write %s: %w", outPath, err)
 	}
-	return nil
+	return diags, nil
 }
 
 // Render builds the *.mcp.go source for the given spec/options without
 // writing to disk. Exported so tests can golden-file the output directly.
+// Diagnostics are written to opts.Warnings (or os.Stderr) but the slice is
+// not returned — call RenderWithDiagnostics when you need structured access.
 func Render(doc *openapi3.T, opts Options) ([]byte, error) {
-	if opts.ClientImport == "" {
-		return nil, fmt.Errorf("ClientImport is required")
-	}
-	if opts.ClientType == "" {
-		opts.ClientType = "ClientWithResponsesInterface"
-	}
-	if opts.PackageName == "" {
-		opts.PackageName = derivePackageName(doc)
+	src, _, err := RenderWithDiagnostics(doc, opts)
+	return src, err
+}
+
+// RenderWithDiagnostics is Render plus the structured Diagnostic slice. The
+// slice is also non-nil when err != nil so callers can inspect what was
+// collected before the failure point.
+func RenderWithDiagnostics(doc *openapi3.T, opts Options) ([]byte, []Diagnostic, error) {
+	if err := opts.normalize(doc); err != nil {
+		return nil, nil, err
 	}
 
-	ops, err := CollectOperations(doc, opts)
+	ops, diags, err := CollectOperations(doc, opts)
 	if err != nil {
-		return nil, err
+		return nil, diags, err
+	}
+
+	clientAlias := path.Base(opts.ClientImport)
+	if err := validateClientAlias(clientAlias); err != nil {
+		return nil, diags, err
+	}
+	if err := validateNoSchemaConstCollisions(ops); err != nil {
+		return nil, diags, err
 	}
 
 	view := templateView{
 		PackageName:  opts.PackageName,
 		ClientImport: opts.ClientImport,
-		ClientAlias:  path.Base(opts.ClientImport),
+		ClientAlias:  clientAlias,
 		ClientType:   opts.ClientType,
 		RegisterFunc: registerFuncName(doc),
 		StaticPrefix: opts.NamePrefix,
@@ -73,19 +88,19 @@ func Render(doc *openapi3.T, opts Options) ([]byte, error) {
 
 	tmpl, err := template.New("mcp").Funcs(templateFuncs()).Parse(fileTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("parse template: %w", err)
+		return nil, diags, fmt.Errorf("parse template: %w", err)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, view); err != nil {
-		return nil, fmt.Errorf("execute template: %w", err)
+		return nil, diags, fmt.Errorf("execute template: %w", err)
 	}
 
 	formatted, err := format.Source(buf.Bytes())
 	if err != nil {
 		// Return the unformatted source so the caller can inspect the failure.
-		return buf.Bytes(), fmt.Errorf("gofmt: %w", err)
+		return buf.Bytes(), diags, fmt.Errorf("gofmt: %w", err)
 	}
-	return formatted, nil
+	return formatted, diags, nil
 }
 
 // Write writes the rendered source to w. Convenience for testing.
@@ -96,6 +111,49 @@ func Write(doc *openapi3.T, opts Options, w io.Writer) error {
 	}
 	_, err = w.Write(src)
 	return err
+}
+
+// validateClientAlias rejects ClientImport paths whose base segment would
+// collide with Go reserved words or with a small set of stdlib packages the
+// template imports anyway (json, context, runtime…). A collision would
+// produce code that fails to compile in confusing ways; failing fast in the
+// generator surfaces the problem at codegen time with a clear message.
+func validateClientAlias(alias string) error {
+	if alias == "" {
+		return fmt.Errorf("derived client alias is empty; ClientImport must end with a non-empty segment")
+	}
+	if token.IsKeyword(alias) {
+		return fmt.Errorf("client import path's base segment %q is a Go reserved word; rename the package directory or alias it via a separate import wrapper", alias)
+	}
+	if _, clash := reservedClientAliases[alias]; clash {
+		return fmt.Errorf("client import path's base segment %q collides with a package the generated file already imports; rename the directory or wrap it in a sub-package", alias)
+	}
+	return nil
+}
+
+// reservedClientAliases lists the package names the template imports
+// unconditionally — using one of these as the user's ClientImport base
+// would shadow the import and break compilation.
+var reservedClientAliases = map[string]struct{}{
+	"context": {},
+	"json":    {},
+	"runtime": {},
+}
+
+// validateNoSchemaConstCollisions ensures every tool's safeIdent-mangled
+// const name is unique. Two operations whose ToolName mangles to the same
+// identifier (e.g. "get-pet" and "get_pet" both → "get_pet") would emit
+// duplicate const declarations; reject this at codegen time.
+func validateNoSchemaConstCollisions(ops []Operation) error {
+	seen := make(map[string]string, len(ops))
+	for _, op := range ops {
+		c := "input_" + safeIdent(op.ToolName)
+		if prev, dup := seen[c]; dup && prev != op.ToolName {
+			return fmt.Errorf("tool names %q and %q both mangle to const %q; rename one operation or pass a -name-prefix to disambiguate", prev, op.ToolName, c)
+		}
+		seen[c] = op.ToolName
+	}
+	return nil
 }
 
 type templateView struct {

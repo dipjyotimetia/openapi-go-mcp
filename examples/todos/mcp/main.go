@@ -75,7 +75,7 @@ func probeUpstream(baseURL string) {
 		fmt.Fprintf(os.Stderr, "todos-mcp: warning: upstream %s unreachable: %v\n", baseURL, err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "todos-mcp: warning: upstream /healthz returned %d\n", resp.StatusCode)
 		return

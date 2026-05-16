@@ -11,6 +11,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,19 +21,40 @@ import (
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
 )
 
-// repoRoot resolves the module root from this test file's location.
+// repoRoot resolves the module root by walking up from cwd until it finds a
+// go.mod. Used by per-test helpers so tests run from any cwd.
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	// internal/e2e → repo root is two levels up.
-	wd, err := os.Getwd()
+	root, err := findRepoRoot()
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
+		t.Fatalf("%v", err)
 	}
-	return filepath.Clean(filepath.Join(wd, "..", ".."))
+	return root
 }
 
 // cliPath is the path to the CLI binary built once in TestMain.
 var cliPath string
+
+// findRepoRoot walks up from cwd until it finds a go.mod, returning the
+// directory that contains it. Returns an error rather than aborting so both
+// *testing.T-aware callers and TestMain (which can't t.Fatalf) can use it.
+func findRepoRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getwd: %w", err)
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("could not find go.mod from %q", wd)
+		}
+		dir = parent
+	}
+}
 
 // TestMain builds the CLI binary into a package-wide temp directory before
 // any test runs, so every test reuses the same binary instead of rebuilding.
@@ -46,9 +68,12 @@ func TestMain(m *testing.M) {
 
 	cliPath = filepath.Join(dir, "openapi-gen-go-mcp")
 	cmd := exec.Command("go", "build", "-o", cliPath, "./cmd/openapi-gen-go-mcp")
-	if cwd, _ := os.Getwd(); cwd != "" {
-		cmd.Dir = filepath.Clean(filepath.Join(cwd, "..", ".."))
+	root, err := findRepoRoot()
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		panic(err)
 	}
+	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(dir)
 		panic("build CLI: " + err.Error() + "\n" + string(out))

@@ -11,15 +11,17 @@ package generator
 import (
 	"encoding/json"
 	"fmt"
-	"io"
+	"go/token"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"
 )
 
 // OpenAPI parameter "in" values. The spec defines these as enum strings; we
@@ -28,6 +30,7 @@ const (
 	inPath   = "path"
 	inQuery  = "query"
 	inHeader = "header"
+	inCookie = "cookie"
 )
 
 // BodyKind classifies how an operation's request body is encoded on the wire.
@@ -58,19 +61,9 @@ const (
 	BodyRaw BodyKind = "raw"
 )
 
-// RequestFilePart describes one binary field inside a multipart body. v1 only
-// fills Path; FieldName/ContentType are reserved for OpenAPI `encoding[field]`
-// metadata in a future change and default to sensible values when empty.
-type RequestFilePart struct {
-	// Path is the JSON-pointer into the body object (e.g. "/attachment").
-	Path string
-	// FieldName overrides the form field name. When empty, the runtime derives
-	// it from the last segment of Path.
-	FieldName string
-	// ContentType overrides the part's Content-Type. When empty, the runtime
-	// uses "application/octet-stream".
-	ContentType string
-}
+// RequestFilePart aliases runtime.RequestFilePart so the generator and the
+// runtime can't drift on the multipart-binary-field shape they exchange.
+type RequestFilePart = runtime.RequestFilePart
 
 // Operation is the generator's internal view of one OpenAPI operation,
 // pre-resolved into the values the template needs.
@@ -98,6 +91,11 @@ type Operation struct {
 	// QueryParams + HeaderParams together populate the oapi-codegen <Op>Params struct.
 	QueryParams  []ParamField
 	HeaderParams []ParamField
+	// CookieParams are OpenAPI 3 `in: cookie` parameters. They do not
+	// populate the oapi-codegen <Op>Params struct (oapi-codegen does not
+	// emit struct fields for cookies); instead the generator wires them
+	// through a RequestEditorFn that calls req.AddCookie() per cookie.
+	CookieParams []ParamField
 	// HasParamsStruct is true when at least one query or header param exists,
 	// meaning oapi-codegen emitted a <Op>Params struct that the typed method
 	// expects as an additional argument.
@@ -144,23 +142,29 @@ type ParamField struct {
 }
 
 // CollectOperations walks the spec and returns the Operations to generate, in
-// a deterministic order. Each operation is rendered with its own schema
-// converter so $defs are self-contained per tool. opts controls the
-// JSON-Schema dialect, the preferred request content-type, and where
-// non-fatal warnings are sent.
+// a deterministic order, alongside any non-fatal diagnostics produced during
+// the walk. Each operation is rendered with its own schema converter so $defs
+// are self-contained per tool. opts controls the JSON-Schema dialect, the
+// preferred request content-type, and where legacy text warnings are sent.
 //
 // Returns an error if any operation cannot be lowered (e.g. unknown request
-// body kind) so the caller can fail fast.
-func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, error) {
+// body kind) so the caller can fail fast. Diagnostics are returned even on
+// error so partial results can be inspected.
+func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic, error) {
 	var ops []Operation
-	if doc.Paths == nil {
-		return ops, nil
-	}
-
 	warnings := opts.Warnings
 	if warnings == nil {
 		warnings = os.Stderr
 	}
+	sink := newDiagSink(warnings)
+
+	if doc.Paths == nil {
+		return ops, sink.finalize(), nil
+	}
+
+	// Spec-wide diagnostics: callbacks/webhooks/security requirements at the
+	// document level (security scheme propagation is currently advisory).
+	emitSpecDiagnostics(doc, sink)
 
 	// Pre-compute the component-schema name map once; every per-operation
 	// converter reuses it via Adopt.
@@ -186,19 +190,44 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, error) {
 		for _, method := range methods {
 			conv := NewSchemaConverter(opts.OpenAICompat)
 			conv.Adopt(nameByPtr)
-			op, err := buildOperation(item, opByMethod[method], method, path, conv, opts, warnings)
+			op, err := buildOperation(item, opByMethod[method], method, path, conv, opts, sink)
 			if err != nil {
-				return nil, fmt.Errorf("%s %s: %w", method, path, err)
+				return nil, sink.finalize(), fmt.Errorf("%s %s: %w", method, path, err)
 			}
 			ops = append(ops, op)
 		}
 	}
-	return ops, nil
+	return ops, sink.finalize(), nil
+}
+
+// emitSpecDiagnostics records spec-wide findings that don't belong to a
+// single operation: server-variable substitutions the runtime can't perform,
+// and security requirements without an explicit credential consumer.
+func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink) {
+	for i, server := range doc.Servers {
+		if len(server.Variables) > 0 {
+			sink.info(DiagDroppedServerVariables,
+				fmt.Sprintf("servers[%d]", i),
+				fmt.Sprintf("server URL %q declares variables; supply substitutions via runtime.WithServerVariables when constructing the upstream client", server.URL))
+		}
+	}
+	if len(doc.Security) > 0 {
+		schemes := []string{}
+		for _, req := range doc.Security {
+			for name := range req {
+				schemes = append(schemes, name)
+			}
+		}
+		sort.Strings(schemes)
+		sink.info(DiagDroppedSecurityRequirement,
+			"#/security",
+			"global security requirement is informational; supply credentials via runtime.WithExtraProperties or an HTTP client request editor. Schemes referenced: "+strings.Join(slices.Compact(schemes), ", "))
+	}
 }
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
-func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, path string, conv *SchemaConverter, opts Options, warnings io.Writer) (Operation, error) {
+func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, path string, conv *SchemaConverter, opts Options, sink *diagSink) (Operation, error) {
 	goName := goMethodName(op.OperationID, method, path)
 	out := Operation{
 		ToolName:    ToolName(op.OperationID, method, path),
@@ -208,26 +237,57 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		Method:      method,
 		Path:        path,
 	}
+	opPath := fmt.Sprintf("%s %s", method, path)
 
-	paramByIn := groupParameters(append(append(openapi3.Parameters{}, item.Parameters...), op.Parameters...))
+	mergedParams := mergeParametersWithShadowWarning(item.Parameters, op.Parameters, opPath, sink)
+	paramByIn := groupParameters(mergedParams)
 
 	for _, m := range pathParamRe.FindAllStringSubmatch(path, -1) {
 		name := m[1]
-		p := paramByIn[inPath][name]
+		p, ok := paramByIn[inPath][name]
+		if !ok {
+			// Spec declared a {param} in the URL template but no matching
+			// parameters[].in=path entry. kin-openapi validation should catch
+			// this earlier; record it as a diagnostic for visibility.
+			sink.warn(DiagMissingPathParam, opPath,
+				fmt.Sprintf("path parameter %q is referenced in the URL but has no parameter definition; treating as a required string", name))
+		}
 		out.PathParams = append(out.PathParams, paramFieldFromSpec(name, p, true))
+		if p != nil {
+			emitParameterStyleDiagnostic(p, opPath, sink)
+		}
 	}
-	out.QueryParams = collectParams(paramByIn[inQuery])
-	out.HeaderParams = collectParams(paramByIn[inHeader])
+	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink)
+	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink)
+	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink)
 	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
+
+	if len(op.Callbacks) > 0 {
+		names := make([]string, 0, len(op.Callbacks))
+		for name := range op.Callbacks {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		sink.warn(DiagDroppedCallback, opPath,
+			"callbacks are not modelled as MCP tools; dropped: "+strings.Join(names, ", "))
+	}
+	if op.Security != nil && len(*op.Security) > 0 {
+		schemes := []string{}
+		for _, req := range *op.Security {
+			for name := range req {
+				schemes = append(schemes, name)
+			}
+		}
+		sort.Strings(schemes)
+		sink.info(DiagDroppedSecurityRequirement, opPath,
+			"per-operation security requirement is informational; supply credentials via runtime.WithExtraProperties / request editor. Schemes: "+strings.Join(slices.Compact(schemes), ", "))
+	}
 
 	if op.RequestBody != nil && op.RequestBody.Value != nil {
 		body := op.RequestBody.Value
 		out.RequestBodyRequired = body.Required
 		if len(body.Content) > 0 {
 			kind, ct, schema := pickRequestContent(body.Content, opts.PreferContentType)
-			// Kinds whose input-schema lowering (raw-string bodies) or
-			// multipart binary-field rewrite is not yet implemented continue
-			// to error so each rollout step is independently verifiable.
 			out.HasRequestBody = true
 			out.RequestBodyKind = kind
 			out.RequestContentType = ct
@@ -251,9 +311,8 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 				}
 			}
 			if kind != BodyJSON && hasContentTypeHeaderParam(out.HeaderParams) {
-				_, _ = fmt.Fprintf(warnings,
-					"openapi-gen-go-mcp: warning: %s %s: Content-Type header parameter is silently overridden by the %s request body\n",
-					method, path, ct)
+				sink.warn(DiagContentTypeHeaderOverride, opPath,
+					fmt.Sprintf("Content-Type header parameter is silently overridden by the %s request body", ct))
 			}
 		}
 	}
@@ -342,6 +401,79 @@ func collectParams(in map[string]*openapi3.Parameter) []ParamField {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// collectParamsWithDiagnostics is collectParams plus per-parameter style/explode
+// diagnostics. Kept as a separate path so callers that don't want
+// diagnostics (tests, future tooling) can still call collectParams cheaply.
+func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath string, sink *diagSink) []ParamField {
+	out := collectParams(in)
+	if sink == nil {
+		return out
+	}
+	// Walk in deterministic (name) order so diagnostic emission is stable.
+	names := make([]string, 0, len(in))
+	for name := range in {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		emitParameterStyleDiagnostic(in[name], opPath, sink)
+	}
+	return out
+}
+
+// supportedParameterStyles enumerates the OpenAPI parameter `style` values
+// the runtime+oapi-codegen pipeline handles correctly today. Other styles
+// (deepObject, matrix, label, spaceDelimited, pipeDelimited) generate code
+// that may not match the spec's wire encoding; emit a diagnostic so the user
+// knows their spec was parsed but the encoding may differ.
+var supportedParameterStyles = map[string]struct{}{
+	"":       {}, // default
+	"form":   {},
+	"simple": {},
+}
+
+func emitParameterStyleDiagnostic(p *openapi3.Parameter, opPath string, sink *diagSink) {
+	if p == nil || sink == nil {
+		return
+	}
+	if _, ok := supportedParameterStyles[p.Style]; ok {
+		return
+	}
+	sink.warn(DiagUnsupportedParameterStyle, opPath,
+		fmt.Sprintf("parameter %q (in=%s) uses style=%q which is not lowered by the generator; wire encoding may diverge from the spec", p.Name, p.In, p.Style))
+}
+
+// mergeParametersWithShadowWarning concatenates pathItem-level + operation-
+// level parameters (operation wins on collision, matching OpenAPI semantics)
+// and emits a diagnostic for each shadowed entry so the user knows two
+// declarations were silently deduplicated.
+func mergeParametersWithShadowWarning(pathItem, op openapi3.Parameters, opPath string, sink *diagSink) openapi3.Parameters {
+	merged := append(openapi3.Parameters{}, pathItem...)
+	merged = append(merged, op...)
+	if sink == nil {
+		return merged
+	}
+	type key struct{ in, name string }
+	first := map[key]struct{}{}
+	for _, ref := range pathItem {
+		if ref == nil || ref.Value == nil {
+			continue
+		}
+		first[key{ref.Value.In, ref.Value.Name}] = struct{}{}
+	}
+	for _, ref := range op {
+		if ref == nil || ref.Value == nil {
+			continue
+		}
+		k := key{ref.Value.In, ref.Value.Name}
+		if _, dup := first[k]; dup {
+			sink.warn(DiagShadowedParameter, opPath,
+				fmt.Sprintf("parameter %q (in=%s) is declared at both PathItem and Operation level; Operation-level definition wins", ref.Value.Name, ref.Value.In))
+		}
+	}
+	return merged
 }
 
 // hasContentTypeHeaderParam reports whether any header param in the operation
@@ -632,6 +764,7 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 	addGroup(inPath, op.PathParams)
 	addGroup(inQuery, op.QueryParams)
 	addGroup(inHeader, op.HeaderParams)
+	addGroup(inCookie, op.CookieParams)
 
 	if op.HasRequestBody {
 		bodySchema, parts := bodyInputSchema(op, conv)
@@ -713,18 +846,10 @@ func goSafeIdent(s string) string {
 		}
 	}
 	id := b.String()
-	if reservedGoWords[id] {
+	if token.IsKeyword(id) {
 		id += "_"
 	}
 	return id
-}
-
-var reservedGoWords = map[string]bool{
-	"break": true, "case": true, "chan": true, "const": true, "continue": true,
-	"default": true, "defer": true, "else": true, "fallthrough": true, "for": true,
-	"func": true, "go": true, "goto": true, "if": true, "import": true,
-	"interface": true, "map": true, "package": true, "range": true, "return": true,
-	"select": true, "struct": true, "switch": true, "type": true, "var": true,
 }
 
 // oapiTypesImport is the import path of the oapi-codegen helper types package.
