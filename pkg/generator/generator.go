@@ -77,8 +77,23 @@ func ListOperations(w io.Writer, doc *openapi3.T) {
 	}
 }
 
-// Generate is the entry point used by the CLI. It will be implemented in M4.
-func Generate(doc *openapi3.T, opts Options) error {
+// Generate is the entry point used by the CLI. It writes the generated file
+// and returns the diagnostics collected during the walk so the CLI can
+// surface them in addition to legacy stderr output.
+func Generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
+	if err := opts.normalize(doc); err != nil {
+		return nil, err
+	}
+	if opts.OutDir == "" {
+		opts.OutDir = "./mcp"
+	}
+	return generate(doc, opts)
+}
+
+// normalize fills in optional fields with their defaults and returns an
+// error when a required field (currently just ClientImport) is missing.
+// Centralising defaulting prevents Render and Generate from drifting.
+func (opts *Options) normalize(doc *openapi3.T) error {
 	if opts.ClientImport == "" {
 		return fmt.Errorf("ClientImport is required")
 	}
@@ -88,10 +103,7 @@ func Generate(doc *openapi3.T, opts Options) error {
 	if opts.PackageName == "" {
 		opts.PackageName = derivePackageName(doc)
 	}
-	if opts.OutDir == "" {
-		opts.OutDir = "./mcp"
-	}
-	return generate(doc, opts)
+	return nil
 }
 
 func derivePackageName(doc *openapi3.T) string {

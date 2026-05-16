@@ -1,0 +1,28 @@
+openapi: 3.0.3
+info:
+  title: Cookie API
+  version: 1.0.0
+paths:
+  /me:
+    get:
+      operationId: getMe
+      parameters:
+        - in: cookie
+          name: session
+          required: true
+          schema:
+            type: string
+        - in: cookie
+          name: csrf
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: string

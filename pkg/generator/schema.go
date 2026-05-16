@@ -171,7 +171,6 @@ func (c *SchemaConverter) copyTypeAndFormat(s *openapi3.Schema, out map[string]a
 	}
 	switch len(types) {
 	case 0:
-		// leave unset
 	case 1:
 		out["type"] = types[0]
 	default:
@@ -364,7 +363,6 @@ func refName(ref string) string {
 	if strings.HasPrefix(ref, prefix) {
 		return ref[len(prefix):]
 	}
-	// Generic fallback: last path segment.
 	if i := strings.LastIndex(ref, "/"); i >= 0 {
 		return ref[i+1:]
 	}
@@ -375,7 +373,6 @@ func normaliseTypes(t *openapi3.Types) []string {
 	if t == nil {
 		return nil
 	}
-	// *openapi3.Types is a []string under the hood.
 	out := make([]string, 0, len(*t))
 	for _, v := range *t {
 		if v != "" {

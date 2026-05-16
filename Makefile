@@ -85,13 +85,24 @@ regen-examples: build
 	    -package todosmcp \
 	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todos
 
-# Quick smoke test: initialise the petstore example MCP server over stdio and list tools.
+# Quick smoke test: initialise the petstore (go-sdk) MCP server over stdio
+# and list tools. Use `make smoke-all` to exercise both backends.
 smoke: build
 	@( printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'; \
 	   sleep 1; \
 	   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'; \
 	   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'; \
 	   sleep 2 ) | go run ./examples/petstore 2>/dev/null | head -2
+
+# Broader smoke: exercise the mark3labs backend too, ensuring the two
+# adapter paths stay in lockstep at the protocol layer.
+smoke-all: build smoke
+	@echo "--- smoke (mark3labs adapter) ---"
+	@( printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'; \
+	   sleep 1; \
+	   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'; \
+	   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'; \
+	   sleep 2 ) | go run ./examples/petstore-mark3labs 2>/dev/null | head -2
 
 clean:
 	rm -rf $(BIN_DIR) dist coverage.out

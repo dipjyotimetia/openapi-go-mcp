@@ -162,24 +162,37 @@ func TestRender_BodyText(t *testing.T) {
 
 func TestRender_ResponseKinds(t *testing.T) {
 	src := renderNonJSONFixture(t)
+	// All response kinds now route through NewToolResultFromHTTP so the runtime
+	// can preserve status code + curated headers. The spec-declared content
+	// type is passed as the fallback so a server that omits Content-Type still
+	// produces a deterministic result shape.
 	cases := []struct {
 		op   string
 		want string
 	}{
-		{"downloadBlob", `runtime.NewToolResultBinary(resp.Body, "application/octet-stream")`},
-		{"getLatestReport", `runtime.NewToolResultText(string(resp.Body))`},
-		// JSON-bodied ops keep the JSON wrapper.
-		{"submitLogin", `runtime.NewToolResultJSON(resp.Body)`},
-		// 200 No-Content ops also stay on the JSON wrapper because an empty
-		// Body marshals to "" via NewToolResultJSON without breaking clients.
-		{"uploadBlob", `runtime.NewToolResultJSON(resp.Body)`},
+		{"downloadBlob", `"application/octet-stream"`},
+		{"getLatestReport", `"text/plain"`},
+		{"submitLogin", `"application/json"`},
+		{"uploadBlob", `runtime.NewToolResultFromHTTP(`},
 	}
 	for _, c := range cases {
 		t.Run(c.op, func(t *testing.T) {
 			if !strings.Contains(src, c.want) {
-				t.Errorf("op %s: expected wrapper %q in generated source", c.op, c.want)
+				t.Errorf("op %s: expected fragment %q in generated source", c.op, c.want)
 			}
 		})
+	}
+	// Every operation must funnel through NewToolResultFromHTTP rather than
+	// the legacy NewToolResultJSON / NewToolResultBinary / NewToolResultText
+	// helpers (which would drop StatusCode and Headers on the floor).
+	for _, drop := range []string{
+		"NewToolResultBinary(resp.Body",
+		"NewToolResultText(string(resp.Body))",
+		"NewToolResultJSON(resp.Body)",
+	} {
+		if strings.Contains(src, drop) {
+			t.Errorf("generated source still uses legacy wrapper %q", drop)
+		}
 	}
 }
 
