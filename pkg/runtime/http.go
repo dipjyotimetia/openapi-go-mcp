@@ -276,10 +276,6 @@ func lastPathSegment(path string) string {
 // removes the leaf value, also pruning intermediate maps that become empty.
 // Returns (nil, false) if any segment is missing or has the wrong type.
 func extractNestedValue(obj map[string]any, path string) (any, bool) {
-	// Strip the leading "/" then split. We expect path to live under obj —
-	// the caller has already stripped the top-level segment by walking into
-	// obj, but the path we received still contains it ("/top/rest…") so we
-	// drop both the leading slash AND the top segment here.
 	_, rest, ok := splitTopSegment(path)
 	if !ok {
 		return nil, false

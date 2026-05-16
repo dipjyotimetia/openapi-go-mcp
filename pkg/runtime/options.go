@@ -160,24 +160,17 @@ func AddExtraPropertiesToTool(tool Tool, properties []ExtraProperty) Tool {
 	var required []any
 	switch r := schema["required"].(type) {
 	case nil:
-		// no-op
 	case []any:
 		required = r
 	default:
-		// "required" present but wrong shape; refuse to mutate.
 		return tool
 	}
 
 	for _, p := range properties {
 		t := p.Type
 		switch t {
-		case "":
-			t = "string"
 		case "string", "number", "integer", "boolean":
-			// supported
 		default:
-			// Unknown type — fall back to string rather than emit invalid
-			// JSON Schema.
 			t = "string"
 		}
 		entry := map[string]any{"type": t}

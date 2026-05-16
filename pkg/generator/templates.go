@@ -154,7 +154,6 @@ func templateFuncs() template.FuncMap {
 			return "input_" + safeIdent(toolName)
 		},
 		"paramsTypeName": func(goMethod string) string {
-			// FindPetsWithResponse → FindPetsParams
 			base := strings.TrimSuffix(goMethod, "WithResponse")
 			return base + "Params"
 		},
@@ -268,7 +267,6 @@ func callArgs(op Operation) (string, error) {
 }
 
 func goQuote(s string) string {
-	// strconv.Quote-equivalent for arbitrary strings.
 	var b strings.Builder
 	b.WriteRune('"')
 	for _, r := range s {
