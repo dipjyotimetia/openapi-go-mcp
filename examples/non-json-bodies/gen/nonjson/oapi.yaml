@@ -2,4 +2,4 @@ package: nonjson
 generate:
   models: true
   client: true
-output: nonjson.gen.go
+output: examples/non-json-bodies/gen/nonjson/nonjson.gen.go

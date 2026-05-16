@@ -54,7 +54,7 @@ func Render(doc *openapi3.T, opts Options) ([]byte, error) {
 		opts.PackageName = derivePackageName(doc)
 	}
 
-	ops, err := CollectOperations(doc, opts.OpenAICompat)
+	ops, err := CollectOperations(doc, opts)
 	if err != nil {
 		return nil, err
 	}

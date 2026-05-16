@@ -6,7 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **`-prefer-content-type` flag** — when an operation declares multiple request content types, override the default JSON → form → multipart → octet → text → xml priority by naming the spec content type to use. Falls back to the priority order when the preferred type isn't declared on a given op.
+- **OpenAPI `discriminator` description hint** — schemas that carry a `discriminator` (with optional `mapping`) now surface the property name and mapping keys in the description, so callers can pick the right branch without the source spec.
+- **Multipart `encoding[field]` metadata** — per-part `Content-Type` overrides declared on a multipart body's `encoding` map are now propagated through `runtime.RequestFilePart` to each file part the runtime writes.
+- **Nested multipart binary fields** — `format:binary` leaves inside nested objects are detected, rewritten to base64 strings, and extracted from the surrounding object at request time. The residual object (after extraction) is sent as a JSON form field; if extraction leaves it empty, the field is omitted.
+- **Content-Type header parameter collision warning** — when a spec declares a `Content-Type` header parameter alongside a non-JSON body, the generator now writes a warning to `Options.Warnings` (defaults to stderr) noting the parameter will be overridden by the body's content type.
+- **Non-JSON response decoding** — the generator now picks a wrapper per operation's primary 2xx response: `NewToolResultJSON` for JSON (unchanged), `NewToolResultText` for `text/*`, and a new `NewToolResultBinary([]byte, contentType string) *CallToolResult` for `application/octet-stream`, `application/xml`, and other raw responses. Binary bodies are base64-encoded into `Text` and surfaced as `{"contentType","base64"}` in `StructuredContent`.
+- **CI `examples` job** — runs `make regen-examples` with pinned oapi-codegen v2.7.0 on every push, then `git diff --exit-code` so an unsynced generator change fails CI before merge.
+
+### Changed
+
+- **`runtime.BuildMultipartBody` signature** — second argument is now `[]runtime.RequestFilePart` instead of `[]string`. Generated code is updated automatically; out-of-tree callers must migrate. (Pre-1.0; no compatibility shim.)
+- **`generator.CollectOperations` signature** — now takes `Options` instead of a `bool openAICompat`, threading `PreferContentType` and `Warnings` through alongside the dialect flag.
+- **GoReleaser config migrated** — `dockers` + `docker_manifests` → single `dockers_v2` multi-platform block; `brews` → `homebrew_casks` (the v2 successor for CLI tools). Local `goreleaser check` is now deprecation-warning-free.
+- **`oapi-codegen` configs in `examples/*/gen/*/oapi.yaml`** — output paths now name the destination explicitly (`examples/.../gen/foo/foo.gen.go`) so `make regen-examples` works regardless of cwd quirks. Previously some configs wrote `foo.gen.go` to the repo root.
+
+### Fixed
+
+- `make regen-examples` is now idempotent: a second run produces no diff. Previously the oapi-codegen step landed some `*.gen.go` files at the repo root because the `output:` field was a bare filename interpreted relative to cwd.
 
 ## [0.1.0] — 2026-05-16
 

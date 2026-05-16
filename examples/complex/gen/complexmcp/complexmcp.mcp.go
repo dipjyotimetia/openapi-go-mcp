@@ -129,6 +129,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 const input_submitEvent = `{
   "$defs": {
     "Event": {
+      "description": "Discriminator: kind. Values: login, logout.",
       "oneOf": [
         {
           "$ref": "#/$defs/LoginEvent"

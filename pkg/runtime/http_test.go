@@ -69,6 +69,25 @@ func TestDecodePathParam_Missing(t *testing.T) {
 	}
 }
 
+func TestNewToolResultBinary(t *testing.T) {
+	raw := []byte{0x01, 0x02, 0x03}
+	res := NewToolResultBinary(raw, "application/octet-stream")
+	want := base64.StdEncoding.EncodeToString(raw)
+	if res.Text != want {
+		t.Errorf("Text: got %q, want %q", res.Text, want)
+	}
+	sc, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent: got %T", res.StructuredContent)
+	}
+	if got := sc["contentType"]; got != "application/octet-stream" {
+		t.Errorf("contentType: got %v", got)
+	}
+	if got := sc["base64"]; got != want {
+		t.Errorf("base64: got %v, want %s", got, want)
+	}
+}
+
 func TestApplyConfig_NamePrefix(t *testing.T) {
 	tool := Tool{Name: "getPet", RawInputSchema: []byte(`{"type":"object"}`)}
 	cfg := NewConfig()
@@ -182,7 +201,7 @@ func TestBuildMultipartBody_FileField(t *testing.T) {
 			"attachment": base64.StdEncoding.EncodeToString(fileBytes),
 		},
 	}
-	contentType, body, err := BuildMultipartBody(args, []string{"/attachment"})
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{{Path: "/attachment"}})
 	if err != nil {
 		t.Fatalf("BuildMultipartBody: %v", err)
 	}
@@ -199,7 +218,7 @@ func TestBuildMultipartBody_FileFieldBadBase64(t *testing.T) {
 	args := map[string]any{
 		"body": map[string]any{"attachment": "not-base64!@#"},
 	}
-	_, _, err := BuildMultipartBody(args, []string{"/attachment"})
+	_, _, err := BuildMultipartBody(args, []RequestFilePart{{Path: "/attachment"}})
 	if err == nil {
 		t.Fatal("expected ToolError for invalid base64 in file field")
 	}
@@ -235,7 +254,7 @@ func TestBuildMultipartBody_MultipleFileFields_DeterministicOrder(t *testing.T) 
 			"caption":   "two files",
 		},
 	}
-	contentType, body, err := BuildMultipartBody(args, []string{"/primary", "/secondary"})
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{{Path: "/primary"}, {Path: "/secondary"}})
 	if err != nil {
 		t.Fatalf("BuildMultipartBody: %v", err)
 	}
@@ -258,13 +277,131 @@ func TestBuildMultipartBody_FileFieldNotString(t *testing.T) {
 	args := map[string]any{
 		"body": map[string]any{"attachment": 42},
 	}
-	_, _, err := BuildMultipartBody(args, []string{"/attachment"})
+	_, _, err := BuildMultipartBody(args, []RequestFilePart{{Path: "/attachment"}})
 	if err == nil {
 		t.Fatal("expected ToolError when file field is not a string")
 	}
 	te, ok := err.(*ToolError)
 	if !ok || te.Code != "invalid_body" {
 		t.Fatalf("expected invalid_body ToolError, got %v", err)
+	}
+}
+
+func TestBuildMultipartBody_NestedFilePath(t *testing.T) {
+	fileBytes := []byte{0xDE, 0xAD}
+	args := map[string]any{
+		"body": map[string]any{
+			"user": map[string]any{
+				"name":   "alice",
+				"avatar": base64.StdEncoding.EncodeToString(fileBytes),
+			},
+			"caption": "hi",
+		},
+	}
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{
+		{Path: "/user/avatar"},
+	})
+	if err != nil {
+		t.Fatalf("BuildMultipartBody: %v", err)
+	}
+	parts := readMultipartParts(t, contentType, body)
+
+	// The avatar must arrive as its own part, base64-decoded back to raw bytes.
+	if got := parts["avatar"]; got != string(fileBytes) {
+		t.Errorf("avatar part bytes = % x, want % x", got, fileBytes)
+	}
+	// The residual user object should still be sent — minus the extracted
+	// avatar — as a JSON form field.
+	if got := parts["user"]; got != `{"name":"alice"}` {
+		t.Errorf("user residual part = %q, want %q", got, `{"name":"alice"}`)
+	}
+	if got := parts["caption"]; got != "hi" {
+		t.Errorf("caption part = %q, want %q", got, "hi")
+	}
+}
+
+func TestBuildMultipartBody_NestedFilePath_EmptyParentOmitted(t *testing.T) {
+	fileBytes := []byte{0x01}
+	args := map[string]any{
+		"body": map[string]any{
+			"user": map[string]any{
+				"avatar": base64.StdEncoding.EncodeToString(fileBytes),
+			},
+		},
+	}
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{
+		{Path: "/user/avatar"},
+	})
+	if err != nil {
+		t.Fatalf("BuildMultipartBody: %v", err)
+	}
+	parts := readMultipartParts(t, contentType, body)
+
+	if _, ok := parts["user"]; ok {
+		t.Errorf("residual user object should be omitted when empty after extraction; got parts=%v", parts)
+	}
+	if got := parts["avatar"]; got != string(fileBytes) {
+		t.Errorf("avatar part bytes = % x, want % x", got, fileBytes)
+	}
+}
+
+func TestBuildMultipartBody_NestedFilePath_ParentNotObject(t *testing.T) {
+	args := map[string]any{
+		"body": map[string]any{"user": "not-an-object"},
+	}
+	_, _, err := BuildMultipartBody(args, []RequestFilePart{{Path: "/user/avatar"}})
+	if err == nil {
+		t.Fatal("expected ToolError when nested path's parent is not an object")
+	}
+	te, ok := err.(*ToolError)
+	if !ok || te.Code != "invalid_body" {
+		t.Fatalf("expected invalid_body ToolError, got %v", err)
+	}
+}
+
+func TestBuildMultipartBody_FilePart_ContentTypeOverride(t *testing.T) {
+	fileBytes := []byte{0xAA, 0xBB}
+	args := map[string]any{
+		"body": map[string]any{
+			"image": base64.StdEncoding.EncodeToString(fileBytes),
+		},
+	}
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{
+		{Path: "/image", ContentType: "image/png"},
+	})
+	if err != nil {
+		t.Fatalf("BuildMultipartBody: %v", err)
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		t.Fatalf("parse content-type: %v", err)
+	}
+	mr := multipart.NewReader(body, params["boundary"])
+	part, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("next part: %v", err)
+	}
+	if got := part.Header.Get("Content-Type"); got != "image/png" {
+		t.Errorf("part content-type: got %q, want image/png", got)
+	}
+}
+
+func TestBuildMultipartBody_FilePart_FieldNameOverride(t *testing.T) {
+	fileBytes := []byte{0xCC}
+	args := map[string]any{
+		"body": map[string]any{
+			"image": base64.StdEncoding.EncodeToString(fileBytes),
+		},
+	}
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{
+		{Path: "/image", FieldName: "renamed"},
+	})
+	if err != nil {
+		t.Fatalf("BuildMultipartBody: %v", err)
+	}
+	names := readMultipartPartNames(t, contentType, body)
+	if len(names) != 1 || names[0] != "renamed" {
+		t.Errorf("FieldName override should rename the part: got %v, want [renamed]", names)
 	}
 }
 

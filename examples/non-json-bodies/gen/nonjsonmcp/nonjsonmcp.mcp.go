@@ -27,6 +27,29 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 		o(cfg)
 	}
 
+	// POST /avatars
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:           "uploadAvatar",
+			Description:    "Upload an avatar image with an encoding contentType override.",
+			RawInputSchema: json.RawMessage(input_uploadAvatar),
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/image", ContentType: "image/png"}})
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			resp, err := c.UploadAvatarWithBodyWithResponse(ctx, contentType, body)
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultJSON(resp.Body), nil
+		},
+	)
+
 	// POST /blobs
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
@@ -50,6 +73,29 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 		},
 	)
 
+	// GET /blobs/{id}
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:           "downloadBlob",
+			Description:    "Download a previously-uploaded blob.",
+			RawInputSchema: json.RawMessage(input_downloadBlob),
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			var id string
+			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
+				return runtime.HandleError(err)
+			}
+			resp, err := c.DownloadBlobWithResponse(ctx, id)
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultBinary(resp.Body, "application/octet-stream"), nil
+		},
+	)
+
 	// POST /files/upload
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
@@ -58,7 +104,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_uploadFile),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
-			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []string{"/attachment"})
+			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/attachment"}})
 			if err != nil {
 				return runtime.HandleError(err)
 			}
@@ -119,6 +165,48 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 		},
 	)
 
+	// POST /profiles
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:           "createProfile",
+			Description:    "Create a profile whose avatar is a nested binary field.",
+			RawInputSchema: json.RawMessage(input_createProfile),
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/user/avatar"}})
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			resp, err := c.CreateProfileWithBodyWithResponse(ctx, contentType, body)
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultJSON(resp.Body), nil
+		},
+	)
+
+	// GET /reports/latest
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:           "getLatestReport",
+			Description:    "Retrieve the most recent plain-text report.",
+			RawInputSchema: json.RawMessage(input_getLatestReport),
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			resp, err := c.GetLatestReportWithResponse(ctx)
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultText(string(resp.Body)), nil
+		},
+	)
+
 	// POST /xml-import
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
@@ -144,6 +232,31 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 
 }
 
+const input_uploadAvatar = `{
+  "properties": {
+    "body": {
+      "properties": {
+        "alt_text": {
+          "type": "string"
+        },
+        "image": {
+          "contentEncoding": "base64",
+          "description": "PNG bytes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
 const input_uploadBlob = `{
   "properties": {
     "body": {
@@ -154,6 +267,26 @@ const input_uploadBlob = `{
   },
   "required": [
     "body"
+  ],
+  "type": "object"
+}`
+
+const input_downloadBlob = `{
+  "properties": {
+    "path": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
   ],
   "type": "object"
 }`
@@ -220,6 +353,44 @@ const input_postNote = `{
   "required": [
     "body"
   ],
+  "type": "object"
+}`
+
+const input_createProfile = `{
+  "properties": {
+    "body": {
+      "properties": {
+        "user": {
+          "properties": {
+            "avatar": {
+              "contentEncoding": "base64",
+              "description": "base64-encoded binary",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "avatar"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "user"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_getLatestReport = `{
+  "properties": {},
   "type": "object"
 }`
 

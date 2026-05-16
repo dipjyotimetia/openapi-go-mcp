@@ -16,6 +16,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 )
 
@@ -65,6 +66,23 @@ func NewToolResultJSON(jsonBytes []byte) *CallToolResult {
 	return &CallToolResult{
 		Text:              string(jsonBytes),
 		StructuredContent: structured,
+	}
+}
+
+// NewToolResultBinary creates a successful result that carries raw bytes from
+// a non-JSON response. The bytes are base64-encoded into Text (so log-style
+// clients see something legible) and surface as a structured object
+// {"contentType": ..., "base64": ...} for clients that consume
+// StructuredContent. Useful for application/octet-stream, application/xml,
+// or any other response content type that doesn't naturally decode to JSON.
+func NewToolResultBinary(raw []byte, contentType string) *CallToolResult {
+	encoded := base64.StdEncoding.EncodeToString(raw)
+	return &CallToolResult{
+		Text: encoded,
+		StructuredContent: map[string]any{
+			"contentType": contentType,
+			"base64":      encoded,
+		},
 	}
 }
 

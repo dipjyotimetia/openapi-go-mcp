@@ -122,16 +122,39 @@ func DecodeParamsCombined(args map[string]any, out any) error {
 	return nil
 }
 
-// multipartFilePartContentType is the per-part Content-Type written for every
-// multipart file field. v1 always uses application/octet-stream; OpenAPI
-// `encoding[field].contentType` overrides are a known gap (see
-// docs/architecture.md).
+// multipartFilePartContentType is the default per-part Content-Type written
+// for a multipart file field when the OpenAPI `encoding[field].contentType`
+// did not supply one. The generator passes a RequestFilePart per file so
+// per-field overrides win when present.
 const multipartFilePartContentType = "application/octet-stream"
 
+// RequestFilePart describes one binary field of a multipart body. The
+// generator emits a slice literal of these from each operation's request
+// body so the runtime knows which JSON-pointer paths to base64-decode and
+// which Content-Disposition / Content-Type to write per part.
+type RequestFilePart struct {
+	// Path is the JSON-pointer into the body object that locates the
+	// base64-encoded string (e.g. "/attachment", "/user/avatar").
+	Path string
+	// FieldName overrides the multipart form field name. When empty, the
+	// runtime derives it from the last segment of Path.
+	FieldName string
+	// ContentType overrides the part's Content-Type. When empty, the runtime
+	// uses multipartFilePartContentType.
+	ContentType string
+}
+
 // BuildMultipartBody encodes args["body"] (a JSON object) as a multipart/form-data
-// payload. Properties whose JSON-pointer path is listed in fileFields are
-// base64-decoded into a file part; all other properties become plain form
-// fields (string values pass through, non-string values are JSON-encoded).
+// payload. Properties whose JSON-pointer path matches a RequestFilePart are
+// base64-decoded into a file part (with the supplied FieldName / ContentType
+// overrides applied); all other properties become plain form fields
+// (string values pass through, non-string values are JSON-encoded).
+//
+// File parts may live at top-level (Path "/avatar") or nested inside an
+// object (Path "/user/avatar"). Nested file paths are extracted from the
+// surrounding object before that object is written as a form field; if the
+// extraction leaves the object empty it is omitted entirely. Arrays of binary
+// items are not supported in v1.
 //
 // Properties are emitted in sorted key order so generated tests can assert on
 // the part list without relying on Go map iteration. The returned content type
@@ -139,10 +162,14 @@ const multipartFilePartContentType = "application/octet-stream"
 //
 // A missing or empty body produces a valid empty multipart payload — callers
 // rely on the MCP input schema to enforce required-ness.
-func BuildMultipartBody(args map[string]any, fileFields []string) (string, io.Reader, error) {
-	fileSet := make(map[string]struct{}, len(fileFields))
-	for _, f := range fileFields {
-		fileSet[f] = struct{}{}
+func BuildMultipartBody(args map[string]any, fileFields []RequestFilePart) (string, io.Reader, error) {
+	byPath := make(map[string]RequestFilePart, len(fileFields))
+	nestedByTopKey := make(map[string][]string)
+	for _, fp := range fileFields {
+		byPath[fp.Path] = fp
+		if topKey, rest, ok := splitTopSegment(fp.Path); ok && rest != "" {
+			nestedByTopKey[topKey] = append(nestedByTopKey[topKey], fp.Path)
+		}
 	}
 
 	body, err := bodyAsObject(args)
@@ -160,9 +187,36 @@ func BuildMultipartBody(args map[string]any, fileFields []string) (string, io.Re
 	mw := multipart.NewWriter(&buf)
 	for _, k := range keys {
 		v := body[k]
-		if _, isFile := fileSet["/"+k]; isFile {
-			if err := writeFilePart(mw, k, v); err != nil {
+		if fp, isFile := byPath["/"+k]; isFile {
+			if err := writeFilePart(mw, k, v, fp); err != nil {
 				return "", nil, err
+			}
+			continue
+		}
+		if nestedPaths, hasNested := nestedByTopKey[k]; hasNested {
+			obj, ok := v.(map[string]any)
+			if !ok {
+				return "", nil, &ToolError{
+					Status:  400,
+					Code:    "invalid_body",
+					Message: fmt.Sprintf("nested file path under %q expects an object, got %T", k, v),
+				}
+			}
+			sort.Strings(nestedPaths)
+			for _, np := range nestedPaths {
+				fp := byPath[np]
+				val, found := extractNestedValue(obj, np)
+				if !found {
+					continue
+				}
+				if err := writeFilePart(mw, lastPathSegment(np), val, fp); err != nil {
+					return "", nil, err
+				}
+			}
+			if len(obj) > 0 {
+				if err := writeFormField(mw, k, obj); err != nil {
+					return "", nil, err
+				}
 			}
 			continue
 		}
@@ -174,6 +228,68 @@ func BuildMultipartBody(args map[string]any, fileFields []string) (string, io.Re
 		return "", nil, &ToolError{Status: 500, Code: "multipart_close", Message: err.Error()}
 	}
 	return mw.FormDataContentType(), &buf, nil
+}
+
+// splitTopSegment splits a JSON-pointer path "/top/rest…" into top + rest.
+// Returns ok=false when the input doesn't start with "/" or has no top
+// segment. rest may be empty for a single-segment path.
+func splitTopSegment(path string) (top, rest string, ok bool) {
+	if len(path) == 0 || path[0] != '/' {
+		return "", "", false
+	}
+	top, rest, _ = strings.Cut(path[1:], "/")
+	return top, rest, true
+}
+
+// lastPathSegment returns the segment after the final "/" of a JSON pointer.
+// Used as the default multipart form-field name for a nested file path.
+func lastPathSegment(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[i+1:]
+	}
+	return path
+}
+
+// extractNestedValue descends into obj following the JSON-pointer path and
+// removes the leaf value, also pruning intermediate maps that become empty.
+// Returns (nil, false) if any segment is missing or has the wrong type.
+func extractNestedValue(obj map[string]any, path string) (any, bool) {
+	// Strip the leading "/" then split. We expect path to live under obj —
+	// the caller has already stripped the top-level segment by walking into
+	// obj, but the path we received still contains it ("/top/rest…") so we
+	// drop both the leading slash AND the top segment here.
+	_, rest, ok := splitTopSegment(path)
+	if !ok {
+		return nil, false
+	}
+	return descendAndPrune(obj, rest)
+}
+
+// descendAndPrune walks remaining path segments (slash-separated, no leading
+// slash) through nested map[string]any nodes, deletes the leaf, and prunes
+// any now-empty intermediate maps.
+func descendAndPrune(node map[string]any, rest string) (any, bool) {
+	if rest == "" {
+		return nil, false
+	}
+	head, tail, hasMore := strings.Cut(rest, "/")
+	v, ok := node[head]
+	if !ok {
+		return nil, false
+	}
+	if !hasMore {
+		delete(node, head)
+		return v, true
+	}
+	child, ok := v.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	result, found := descendAndPrune(child, tail)
+	if found && len(child) == 0 {
+		delete(node, head)
+	}
+	return result, found
 }
 
 // BuildBase64BytesBody reads args["body"] as a base64-encoded string and
@@ -248,7 +364,9 @@ func bodyAsString(args map[string]any) (string, bool, error) {
 // writeFilePart writes a single multipart file part. The value must be a
 // base64-encoded string; arbitrary JSON types are rejected so that schema
 // drift surfaces loudly rather than encoding the JSON literal as part bytes.
-func writeFilePart(mw *multipart.Writer, name string, v any) error {
+// fp's FieldName and ContentType override the defaults derived from name /
+// multipartFilePartContentType.
+func writeFilePart(mw *multipart.Writer, name string, v any, fp RequestFilePart) error {
 	s, ok := v.(string)
 	if !ok {
 		return &ToolError{
@@ -265,10 +383,18 @@ func writeFilePart(mw *multipart.Writer, name string, v any) error {
 			Message: fmt.Sprintf("decode file field %q as base64: %v", name, err),
 		}
 	}
+	fieldName := fp.FieldName
+	if fieldName == "" {
+		fieldName = name
+	}
+	contentType := fp.ContentType
+	if contentType == "" {
+		contentType = multipartFilePartContentType
+	}
 	header := textproto.MIMEHeader{}
 	header.Set("Content-Disposition",
-		fmt.Sprintf(`form-data; name=%q; filename=%q`, name, name))
-	header.Set("Content-Type", multipartFilePartContentType)
+		fmt.Sprintf(`form-data; name=%q; filename=%q`, fieldName, fieldName))
+	header.Set("Content-Type", contentType)
 	part, err := mw.CreatePart(header)
 	if err != nil {
 		return &ToolError{Status: 500, Code: "multipart_part", Message: err.Error()}

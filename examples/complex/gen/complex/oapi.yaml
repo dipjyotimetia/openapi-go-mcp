@@ -2,4 +2,4 @@ package: complex
 generate:
   models: true
   client: true
-output: complex.gen.go
+output: examples/complex/gen/complex/complex.gen.go

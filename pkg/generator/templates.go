@@ -104,7 +104,13 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
 			}
+			{{- if eq .ResponseKind "text"}}
+			return runtime.NewToolResultText(string(resp.Body)), nil
+			{{- else if eq .ResponseKind "octet" "raw"}}
+			return runtime.NewToolResultBinary(resp.Body, {{quote .ResponseContentType}}), nil
+			{{- else}}
 			return runtime.NewToolResultJSON(resp.Body), nil
+			{{- end}}
 		},
 	)
 	{{end}}
@@ -156,20 +162,32 @@ func isTypedBody(kind BodyKind) bool {
 	return kind == BodyJSON || kind == BodyForm
 }
 
-// fileFieldsLit renders a []string Go literal of the JSON-pointer paths that
-// runtime.BuildMultipartBody should treat as file parts. Empty input emits
-// `nil` so a no-file multipart op still produces valid code.
+// fileFieldsLit renders a []runtime.RequestFilePart Go literal describing
+// each multipart binary field's JSON-pointer path, optional form field name,
+// and optional per-part Content-Type. Empty input emits `nil` so a no-file
+// multipart op still produces valid code. Field overrides are emitted only
+// when non-empty to keep the literal compact for the common case.
 func fileFieldsLit(parts []RequestFilePart) string {
 	if len(parts) == 0 {
 		return "nil"
 	}
 	var b strings.Builder
-	b.WriteString("[]string{")
+	b.WriteString("[]runtime.RequestFilePart{")
 	for i, p := range parts {
 		if i > 0 {
 			b.WriteString(", ")
 		}
+		b.WriteString("{Path: ")
 		b.WriteString(strconv.Quote(p.Path))
+		if p.FieldName != "" {
+			b.WriteString(", FieldName: ")
+			b.WriteString(strconv.Quote(p.FieldName))
+		}
+		if p.ContentType != "" {
+			b.WriteString(", ContentType: ")
+			b.WriteString(strconv.Quote(p.ContentType))
+		}
+		b.WriteString("}")
 	}
 	b.WriteString("}")
 	return b.String()

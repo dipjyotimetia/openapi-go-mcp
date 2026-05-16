@@ -9,6 +9,7 @@
 package generator
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -288,6 +289,7 @@ func (c *SchemaConverter) copyComposition(s *openapi3.Schema, out map[string]any
 		for _, branch := range s.AllOf {
 			c.mergeInto(out, c.Convert(branch))
 		}
+		appendDiscriminatorHint(s, out)
 		return
 	}
 	if len(s.OneOf) > 0 {
@@ -301,6 +303,33 @@ func (c *SchemaConverter) copyComposition(s *openapi3.Schema, out map[string]any
 	}
 	if s.Not != nil {
 		out["not"] = c.Convert(s.Not)
+	}
+	appendDiscriminatorHint(s, out)
+}
+
+// appendDiscriminatorHint surfaces OpenAPI's `discriminator` semantics (which
+// JSON Schema has no native equivalent for) as plain text in the schema's
+// description. The hint names the discriminator property and, when a mapping
+// table is present, lists the legal values in sorted order so callers can
+// pick the right branch even without seeing the original spec.
+func appendDiscriminatorHint(s *openapi3.Schema, out map[string]any) {
+	if s.Discriminator == nil || s.Discriminator.PropertyName == "" {
+		return
+	}
+	parts := []string{"Discriminator: " + s.Discriminator.PropertyName}
+	if len(s.Discriminator.Mapping) > 0 {
+		keys := make([]string, 0, len(s.Discriminator.Mapping))
+		for k := range s.Discriminator.Mapping {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts = append(parts, "Values: "+strings.Join(keys, ", "))
+	}
+	hint := strings.Join(parts, ". ") + "."
+	if existing, ok := out["description"].(string); ok && existing != "" {
+		out["description"] = existing + "\n\n" + hint
+	} else {
+		out["description"] = hint
 	}
 }
 

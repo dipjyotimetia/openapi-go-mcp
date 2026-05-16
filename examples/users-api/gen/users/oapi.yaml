@@ -2,4 +2,4 @@ package: users
 generate:
   models: true
   client: true
-output: users.gen.go
+output: examples/users-api/gen/users/users.gen.go

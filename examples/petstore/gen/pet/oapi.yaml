@@ -2,4 +2,4 @@ package: pet
 generate:
   models: true
   client: true
-output: pet.gen.go
+output: examples/petstore/gen/pet/pet.gen.go

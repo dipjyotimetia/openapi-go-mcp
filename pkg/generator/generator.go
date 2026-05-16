@@ -38,6 +38,15 @@ type Options struct {
 	// OpenAICompat narrows generated JSON Schema to the subset accepted by
 	// OpenAI tool calls (no $ref, no oneOf/anyOf/allOf, additionalProperties:false).
 	OpenAICompat bool
+	// PreferContentType, when non-empty, makes the generator pick this content
+	// type for the request body whenever an operation declares it — overriding
+	// the default JSON → form → multipart → octet → text/* → xml priority.
+	// Operations that don't declare the preferred type fall back to the
+	// default priority.
+	PreferContentType string
+	// Warnings receives non-fatal generator messages (e.g. spec/handler
+	// conflicts). When nil, warnings are written to os.Stderr.
+	Warnings io.Writer
 }
 
 // ListOperations writes a human-readable summary of the operations in doc to w.

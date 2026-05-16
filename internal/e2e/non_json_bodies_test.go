@@ -61,6 +61,17 @@ func newNonJSONUpstream(t *testing.T) (*httptest.Server, *[]upstreamCall, *sync.
 		record(r)
 		w.WriteHeader(http.StatusOK)
 	})
+	// GET /blobs/{id} returns raw bytes — exercises the non-JSON response path.
+	mux.HandleFunc("/blobs/", func(w http.ResponseWriter, r *http.Request) {
+		record(r)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte{0xCA, 0xFE, 0xBA, 0xBE})
+	})
+	mux.HandleFunc("/reports/latest", func(w http.ResponseWriter, r *http.Request) {
+		record(r)
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("latest report contents"))
+	})
 	mux.HandleFunc("/notes", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
 		w.WriteHeader(http.StatusOK)
@@ -279,6 +290,47 @@ func TestE2E_NonJSON_Text_PlainBody(t *testing.T) {
 	}
 	if string(c.Body) != "hello world" {
 		t.Errorf("body = %q, want %q", c.Body, "hello world")
+	}
+}
+
+func TestE2E_NonJSON_Response_Binary_Base64Wrapped(t *testing.T) {
+	upstream, _, _ := newNonJSONUpstream(t)
+	cs := connectNonJSONClient(t, upstream.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "downloadBlob",
+		Arguments: map[string]any{
+			"path": map[string]any{"id": "abc123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %v", textOf(res))
+	}
+	// The non-JSON response wrapper base64-encodes the bytes into Text so
+	// MCP clients that only look at content/text get something legible.
+	want := base64.StdEncoding.EncodeToString([]byte{0xCA, 0xFE, 0xBA, 0xBE})
+	if got := textOf(res); got != want {
+		t.Errorf("text content = %q, want %q", got, want)
+	}
+}
+
+func TestE2E_NonJSON_Response_Text_PlainBody(t *testing.T) {
+	upstream, _, _ := newNonJSONUpstream(t)
+	cs := connectNonJSONClient(t, upstream.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "getLatestReport"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if got := textOf(res); got != "latest report contents" {
+		t.Errorf("text content = %q, want %q", got, "latest report contents")
 	}
 }
 

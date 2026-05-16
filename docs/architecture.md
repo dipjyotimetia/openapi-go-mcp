@@ -179,13 +179,12 @@ When an operation declares more than one content type, the generator picks deter
 
 ## Known limitations
 
-- Only `application/json` response bodies are decoded into structured JSON; non-JSON responses are surfaced as raw bytes via `NewToolResultJSON` (the `Text` field is still populated, but `StructuredContent` may be malformed for non-JSON payloads).
-- Multipart bodies only rewrite `format:binary` fields at the top level of the body object. Nested binary leaves are not detected.
-- Multipart `encoding[field]` metadata (per-part content-type, custom headers) is ignored; every file part is sent as `application/octet-stream`.
-- A spec header parameter named `Content-Type` is silently overridden by oapi-codegen's `<Op>WithBodyWithResponse` for non-JSON request bodies.
-- Streaming responses (SSE, chunked) surface as raw bytes in the result. No first-class streaming support yet.
-- No dynamic (runtime, no-codegen) registration path. Adding one is straightforward and is tracked in [TODO](TODO.md) (planned for a future release).
-- The schema-converter does not propagate `discriminator` mapping — OpenAPI-specific semantics that JSON Schema lacks.
+- Response decoding by content type: `application/json` uses `NewToolResultJSON` (structured); `text/*` uses `NewToolResultText`; `application/octet-stream`, `application/xml`, and other binary/raw types use `NewToolResultBinary` (base64-encoded into `Text`, surfaced as `{"contentType","base64"}` in `StructuredContent`). Operations with no response body keep the JSON wrapper (empty body in, empty result out).
+- Multipart binary fields are detected for top-level and nested-object properties. Arrays of binary items are not unpacked into per-element parts (binary leaves under `items` schemas are ignored in v1).
+- A spec header parameter named `Content-Type` alongside a non-JSON request body emits a generator-time warning. The header is still silently overridden by oapi-codegen's `<Op>WithBodyWithResponse` at runtime.
+- Streaming responses (SSE, chunked transfer-encoding) surface as raw bytes — no first-class streaming support yet.
+- No dynamic (runtime, no-codegen) registration path. Tracked in [TODO](TODO.md).
+- The schema-converter surfaces `discriminator` as a human-readable hint in the schema's `description` (property name + mapping keys). It does not invent JSON-Schema keywords (`if`/`then`/`else`) for branch selection — clients must read the description to drive the choice.
 
 ## References
 

@@ -2,4 +2,4 @@ package: library
 generate:
   models: true
   client: true
-output: library.gen.go
+output: examples/library/gen/library/library.gen.go

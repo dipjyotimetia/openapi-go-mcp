@@ -9,10 +9,13 @@
 package generator
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
 
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
 )
@@ -68,8 +71,8 @@ func TestRender_BodyMultipart(t *testing.T) {
 
 	want := []string{
 		// Handler builds the body via the multipart runtime helper and passes
-		// the JSON-pointer list of binary fields.
-		`runtime.BuildMultipartBody(req.Arguments, []string{"/attachment"})`,
+		// the binary-field metadata list.
+		`runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/attachment"}})`,
 		// Dispatches to the generic raw-body variant of the typed client.
 		"c.UploadFileWithBodyWithResponse(ctx, contentType, body)",
 		// Schema rewrite must replace format:binary with contentEncoding:base64.
@@ -89,6 +92,40 @@ func TestRender_BodyMultipart(t *testing.T) {
 		}
 		if strings.Contains(attachmentBlock, `"format": "binary"`) {
 			t.Errorf("multipart binary field still has format:binary\n%s", attachmentBlock)
+		}
+	}
+}
+
+func TestRender_BodyMultipart_EncodingContentType(t *testing.T) {
+	src := renderNonJSONFixture(t)
+
+	// The uploadAvatar op declares encoding.image.contentType: image/png; the
+	// generator must propagate that into the RequestFilePart literal so the
+	// runtime writes the right per-part header.
+	want := `runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/image", ContentType: "image/png"}})`
+	if !strings.Contains(src, want) {
+		t.Errorf("expected encoding-aware multipart literal\nwant: %s\n--- got ---\n%s", want, src)
+	}
+}
+
+func TestRender_BodyMultipart_NestedBinary(t *testing.T) {
+	src := renderNonJSONFixture(t)
+
+	// createProfile declares user.avatar with format:binary. The walker must
+	// produce a nested JSON-pointer path; the runtime takes care of extracting
+	// the value from the surrounding object.
+	want := `runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/user/avatar"}})`
+	if !strings.Contains(src, want) {
+		t.Errorf("expected nested binary literal\nwant: %s\n--- got ---\n%s", want, src)
+	}
+	// The schema rewrite must reach the nested leaf — no `format: "binary"`
+	// should survive under the createProfile input schema.
+	for name, raw := range extractInputSchemas(src) {
+		if !strings.Contains(name, "createProfile") {
+			continue
+		}
+		if strings.Contains(raw, `"format": "binary"`) {
+			t.Errorf("nested binary leaf still has format:binary\n%s", raw)
 		}
 	}
 }
@@ -123,6 +160,29 @@ func TestRender_BodyText(t *testing.T) {
 	}
 }
 
+func TestRender_ResponseKinds(t *testing.T) {
+	src := renderNonJSONFixture(t)
+	cases := []struct {
+		op   string
+		want string
+	}{
+		{"downloadBlob", `runtime.NewToolResultBinary(resp.Body, "application/octet-stream")`},
+		{"getLatestReport", `runtime.NewToolResultText(string(resp.Body))`},
+		// JSON-bodied ops keep the JSON wrapper.
+		{"submitLogin", `runtime.NewToolResultJSON(resp.Body)`},
+		// 200 No-Content ops also stay on the JSON wrapper because an empty
+		// Body marshals to "" via NewToolResultJSON without breaking clients.
+		{"uploadBlob", `runtime.NewToolResultJSON(resp.Body)`},
+	}
+	for _, c := range cases {
+		t.Run(c.op, func(t *testing.T) {
+			if !strings.Contains(src, c.want) {
+				t.Errorf("op %s: expected wrapper %q in generated source", c.op, c.want)
+			}
+		})
+	}
+}
+
 func TestRender_BodyRaw_XML(t *testing.T) {
 	src := renderNonJSONFixture(t)
 
@@ -134,6 +194,125 @@ func TestRender_BodyRaw_XML(t *testing.T) {
 	for _, fragment := range want {
 		if !strings.Contains(src, fragment) {
 			t.Errorf("expected generated source to contain %q", fragment)
+		}
+	}
+}
+
+func TestRender_PreferContentType_OverridesPriority(t *testing.T) {
+	// Operation declares JSON + form + multipart. Default priority picks JSON.
+	doc := `
+openapi: 3.0.0
+info: {title: prefer-ct, version: "0.1"}
+paths:
+  /thing:
+    post:
+      operationId: doThing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, properties: {name: {type: string}}}
+          application/x-www-form-urlencoded:
+            schema: {type: object, properties: {name: {type: string}}}
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200": {description: OK}
+`
+	spec, err := openapi3.NewLoader().LoadFromData([]byte(doc))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := spec.Validate(context.Background()); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	// Default (no preference): JSON wins.
+	defaultSrc, err := Render(spec, Options{
+		PackageName:  "prefctmcp",
+		ClientImport: "github.com/example/prefct",
+	})
+	if err != nil {
+		t.Fatalf("render default: %v", err)
+	}
+	if !strings.Contains(string(defaultSrc), "DoThingJSONRequestBody") {
+		t.Errorf("default render should use JSON typed body\n%s", defaultSrc)
+	}
+
+	// With preference: multipart wins.
+	preferredSrc, err := Render(spec, Options{
+		PackageName:       "prefctmcp",
+		ClientImport:      "github.com/example/prefct",
+		PreferContentType: "multipart/form-data",
+	})
+	if err != nil {
+		t.Fatalf("render preferred: %v", err)
+	}
+	want := []string{
+		"runtime.BuildMultipartBody",
+		"DoThingWithBodyWithResponse(ctx, contentType, body)",
+	}
+	for _, s := range want {
+		if !strings.Contains(string(preferredSrc), s) {
+			t.Errorf("expected preferred render to contain %q\n%s", s, preferredSrc)
+		}
+	}
+	if strings.Contains(string(preferredSrc), "DoThingJSONRequestBody") {
+		t.Errorf("preferred render should NOT use JSON typed body")
+	}
+}
+
+func TestRender_ContentTypeHeaderCollision_Warns(t *testing.T) {
+	doc := `
+openapi: 3.0.0
+info: {title: ct-header, version: "0.1"}
+paths:
+  /upload:
+    post:
+      operationId: doUpload
+      parameters:
+        - in: header
+          name: Content-Type
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200": {description: OK}
+`
+	spec, err := openapi3.NewLoader().LoadFromData([]byte(doc))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := spec.Validate(context.Background()); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := Render(spec, Options{
+		PackageName:  "ctmcp",
+		ClientImport: "github.com/example/ct",
+		Warnings:     &buf,
+	}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"POST /upload",
+		"Content-Type header parameter",
+		"multipart/form-data",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning missing %q\n--- got ---\n%s", want, got)
 		}
 	}
 }

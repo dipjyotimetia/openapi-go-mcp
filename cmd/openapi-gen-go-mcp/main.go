@@ -39,6 +39,7 @@ func main() {
 		clientType   = flag.String("client-type", "ClientWithResponsesInterface", "client interface name from the oapi-codegen package")
 		namePrefix   = flag.String("name-prefix", "", "static prefix added to every tool name")
 		openAICompat = flag.Bool("openai-compat", false, "emit OpenAI-tool-compatible JSON Schema")
+		preferCT     = flag.String("prefer-content-type", "", "request content type to pick when an operation declares multiple (overrides the JSON → form → multipart → octet → text → xml priority)")
 		listOnly     = flag.Bool("list", false, "do not generate; list operations from the spec and exit")
 		emitV3       = flag.String("emit-v3", "", "do not generate code; write the spec as OpenAPI 3.x YAML to this path (useful for feeding converted Swagger 2.0 to oapi-codegen)")
 		showVersion  = flag.Bool("version", false, "print version information and exit")
@@ -77,12 +78,13 @@ func main() {
 	}
 
 	opts := generator.Options{
-		OutDir:       *outDir,
-		PackageName:  *pkgName,
-		ClientImport: *clientImport,
-		ClientType:   *clientType,
-		NamePrefix:   *namePrefix,
-		OpenAICompat: *openAICompat,
+		OutDir:            *outDir,
+		PackageName:       *pkgName,
+		ClientImport:      *clientImport,
+		ClientType:        *clientType,
+		NamePrefix:        *namePrefix,
+		OpenAICompat:      *openAICompat,
+		PreferContentType: *preferCT,
 	}
 	if err := generator.Generate(doc, opts); err != nil {
 		fatal("generate: %v", err)

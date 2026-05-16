@@ -70,64 +70,40 @@ changelog:
       - "^chore:"
       - "Merge pull request"
 
-dockers:
-  - image_templates:
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:{{ .Version }}-amd64"
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:latest-amd64"
-    use: buildx
-    goarch: amd64
+dockers_v2:
+  - images:
+      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
     dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.description=OpenAPI → Go MCP code generator"
-      - "--label=org.opencontainers.image.source=https://github.com/dipjyotimetia/openapi-gen-go-mcp"
-      - "--label=org.opencontainers.image.licenses=Apache-2.0"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.created={{ .Date }}"
-  - image_templates:
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:{{ .Version }}-arm64"
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:latest-arm64"
-    use: buildx
-    goarch: arm64
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.description=OpenAPI → Go MCP code generator"
-      - "--label=org.opencontainers.image.source=https://github.com/dipjyotimetia/openapi-gen-go-mcp"
-      - "--label=org.opencontainers.image.licenses=Apache-2.0"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.created={{ .Date }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "OpenAPI → Go MCP code generator"
+      org.opencontainers.image.source: "https://github.com/dipjyotimetia/openapi-gen-go-mcp"
+      org.opencontainers.image.licenses: "Apache-2.0"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
 
-docker_manifests:
-  - name_template: "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:{{ .Version }}-amd64"
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:latest"
-    image_templates:
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:latest-amd64"
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp:latest-arm64"
-
-brews:
+homebrew_casks:
   - name: openapi-gen-go-mcp
     repository:
       owner: dipjyotimetia
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/dipjyotimetia/openapi-gen-go-mcp"
     description: "OpenAPI 3.x / Swagger 2.0 → Go MCP code generator"
-    license: "Apache-2.0"
+    binaries:
+      - openapi-gen-go-mcp
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    test: |
-      system "#{bin}/openapi-gen-go-mcp", "-h"
 
 release:
   github:

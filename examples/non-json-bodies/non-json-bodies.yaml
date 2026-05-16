@@ -64,6 +64,59 @@ paths:
                 properties:
                   id:
                     type: string
+  /avatars:
+    post:
+      operationId: uploadAvatar
+      summary: Upload an avatar image with an encoding contentType override.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: PNG bytes.
+                alt_text:
+                  type: string
+            encoding:
+              image:
+                contentType: image/png
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string}
+  /profiles:
+    post:
+      operationId: createProfile
+      summary: Create a profile whose avatar is a nested binary field.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [user]
+              properties:
+                user:
+                  type: object
+                  required: [avatar]
+                  properties:
+                    name: {type: string}
+                    avatar:
+                      type: string
+                      format: binary
+      responses:
+        "201":
+          description: Created
   /blobs:
     post:
       operationId: uploadBlob
@@ -78,6 +131,33 @@ paths:
       responses:
         "200":
           description: OK
+  /blobs/{id}:
+    get:
+      operationId: downloadBlob
+      summary: Download a previously-uploaded blob.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+  /reports/latest:
+    get:
+      operationId: getLatestReport
+      summary: Retrieve the most recent plain-text report.
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema: {type: string}
   /notes:
     post:
       operationId: postNote

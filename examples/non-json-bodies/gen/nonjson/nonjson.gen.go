@@ -16,6 +16,14 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// UploadAvatarMultipartBody defines parameters for UploadAvatar.
+type UploadAvatarMultipartBody struct {
+	AltText *string `json:"alt_text,omitempty"`
+
+	// Image PNG bytes.
+	Image openapi_types.File `json:"image"`
+}
+
 // UploadFileMultipartBody defines parameters for UploadFile.
 type UploadFileMultipartBody struct {
 	// Attachment The binary blob to upload.
@@ -33,6 +41,17 @@ type SubmitLoginFormdataBody struct {
 // PostNoteTextBody defines parameters for PostNote.
 type PostNoteTextBody = string
 
+// CreateProfileMultipartBody defines parameters for CreateProfile.
+type CreateProfileMultipartBody struct {
+	User struct {
+		Avatar openapi_types.File `json:"avatar"`
+		Name   *string            `json:"name,omitempty"`
+	} `json:"user"`
+}
+
+// UploadAvatarMultipartRequestBody defines body for UploadAvatar for multipart/form-data ContentType.
+type UploadAvatarMultipartRequestBody UploadAvatarMultipartBody
+
 // UploadFileMultipartRequestBody defines body for UploadFile for multipart/form-data ContentType.
 type UploadFileMultipartRequestBody UploadFileMultipartBody
 
@@ -41,6 +60,9 @@ type SubmitLoginFormdataRequestBody SubmitLoginFormdataBody
 
 // PostNoteTextRequestBody defines body for PostNote for text/plain ContentType.
 type PostNoteTextRequestBody = PostNoteTextBody
+
+// CreateProfileMultipartRequestBody defines body for CreateProfile for multipart/form-data ContentType.
+type CreateProfileMultipartRequestBody CreateProfileMultipartBody
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -115,8 +137,14 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// UploadAvatarWithBody request with any body
+	UploadAvatarWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// UploadBlobWithBody request with any body
 	UploadBlobWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DownloadBlob request
+	DownloadBlob(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UploadFileWithBody request with any body
 	UploadFileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -131,12 +159,42 @@ type ClientInterface interface {
 
 	PostNoteWithTextBody(ctx context.Context, body PostNoteTextRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateProfileWithBody request with any body
+	CreateProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetLatestReport request
+	GetLatestReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ImportXMLWithBody request with any body
 	ImportXMLWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+func (c *Client) UploadAvatarWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUploadAvatarRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) UploadBlobWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUploadBlobRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DownloadBlob(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDownloadBlobRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +265,30 @@ func (c *Client) PostNoteWithTextBody(ctx context.Context, body PostNoteTextRequ
 	return c.Client.Do(req)
 }
 
+func (c *Client) CreateProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProfileRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetLatestReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLatestReportRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ImportXMLWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewImportXMLRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -217,6 +299,35 @@ func (c *Client) ImportXMLWithBody(ctx context.Context, contentType string, body
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewUploadAvatarRequestWithBody generates requests for UploadAvatar with any type of body
+func NewUploadAvatarRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/avatars")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewUploadBlobRequestWithBody generates requests for UploadBlob with any type of body
@@ -244,6 +355,40 @@ func NewUploadBlobRequestWithBody(server string, contentType string, body io.Rea
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDownloadBlobRequest generates requests for DownloadBlob
+func NewDownloadBlobRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/blobs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -357,6 +502,62 @@ func NewPostNoteRequestWithBody(server string, contentType string, body io.Reade
 	return req, nil
 }
 
+// NewCreateProfileRequestWithBody generates requests for CreateProfile with any type of body
+func NewCreateProfileRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/profiles")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetLatestReportRequest generates requests for GetLatestReport
+func NewGetLatestReportRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/reports/latest")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewImportXMLRequestWithBody generates requests for ImportXML with any type of body
 func NewImportXMLRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -429,8 +630,14 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// UploadAvatarWithBodyWithResponse request with any body
+	UploadAvatarWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadAvatarResponse, error)
+
 	// UploadBlobWithBodyWithResponse request with any body
 	UploadBlobWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadBlobResponse, error)
+
+	// DownloadBlobWithResponse request
+	DownloadBlobWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DownloadBlobResponse, error)
 
 	// UploadFileWithBodyWithResponse request with any body
 	UploadFileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadFileResponse, error)
@@ -445,8 +652,46 @@ type ClientWithResponsesInterface interface {
 
 	PostNoteWithTextBodyWithResponse(ctx context.Context, body PostNoteTextRequestBody, reqEditors ...RequestEditorFn) (*PostNoteResponse, error)
 
+	// CreateProfileWithBodyWithResponse request with any body
+	CreateProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProfileResponse, error)
+
+	// GetLatestReportWithResponse request
+	GetLatestReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLatestReportResponse, error)
+
 	// ImportXMLWithBodyWithResponse request with any body
 	ImportXMLWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportXMLResponse, error)
+}
+
+type UploadAvatarResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Id *string `json:"id,omitempty"`
+	}
+}
+
+// Status returns HTTPResponse.Status
+func (r UploadAvatarResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UploadAvatarResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UploadAvatarResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type UploadBlobResponse struct {
@@ -472,6 +717,35 @@ func (r UploadBlobResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UploadBlobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DownloadBlobResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r DownloadBlobResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DownloadBlobResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DownloadBlobResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -571,6 +845,64 @@ func (r PostNoteResponse) ContentType() string {
 	return ""
 }
 
+type CreateProfileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateProfileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateProfileResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetLatestReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetLatestReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetLatestReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetLatestReportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ImportXMLResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -600,6 +932,15 @@ func (r ImportXMLResponse) ContentType() string {
 	return ""
 }
 
+// UploadAvatarWithBodyWithResponse request with arbitrary body returning *UploadAvatarResponse
+func (c *ClientWithResponses) UploadAvatarWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadAvatarResponse, error) {
+	rsp, err := c.UploadAvatarWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUploadAvatarResponse(rsp)
+}
+
 // UploadBlobWithBodyWithResponse request with arbitrary body returning *UploadBlobResponse
 func (c *ClientWithResponses) UploadBlobWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadBlobResponse, error) {
 	rsp, err := c.UploadBlobWithBody(ctx, contentType, body, reqEditors...)
@@ -607,6 +948,15 @@ func (c *ClientWithResponses) UploadBlobWithBodyWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseUploadBlobResponse(rsp)
+}
+
+// DownloadBlobWithResponse request returning *DownloadBlobResponse
+func (c *ClientWithResponses) DownloadBlobWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DownloadBlobResponse, error) {
+	rsp, err := c.DownloadBlob(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDownloadBlobResponse(rsp)
 }
 
 // UploadFileWithBodyWithResponse request with arbitrary body returning *UploadFileResponse
@@ -652,6 +1002,24 @@ func (c *ClientWithResponses) PostNoteWithTextBodyWithResponse(ctx context.Conte
 	return ParsePostNoteResponse(rsp)
 }
 
+// CreateProfileWithBodyWithResponse request with arbitrary body returning *CreateProfileResponse
+func (c *ClientWithResponses) CreateProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProfileResponse, error) {
+	rsp, err := c.CreateProfileWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProfileResponse(rsp)
+}
+
+// GetLatestReportWithResponse request returning *GetLatestReportResponse
+func (c *ClientWithResponses) GetLatestReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLatestReportResponse, error) {
+	rsp, err := c.GetLatestReport(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetLatestReportResponse(rsp)
+}
+
 // ImportXMLWithBodyWithResponse request with arbitrary body returning *ImportXMLResponse
 func (c *ClientWithResponses) ImportXMLWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportXMLResponse, error) {
 	rsp, err := c.ImportXMLWithBody(ctx, contentType, body, reqEditors...)
@@ -659,6 +1027,34 @@ func (c *ClientWithResponses) ImportXMLWithBodyWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseImportXMLResponse(rsp)
+}
+
+// ParseUploadAvatarResponse parses an HTTP response from a UploadAvatarWithResponse call
+func ParseUploadAvatarResponse(rsp *http.Response) (*UploadAvatarResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UploadAvatarResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Id *string `json:"id,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseUploadBlobResponse parses an HTTP response from a UploadBlobWithResponse call
@@ -670,6 +1066,22 @@ func ParseUploadBlobResponse(rsp *http.Response) (*UploadBlobResponse, error) {
 	}
 
 	response := &UploadBlobResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseDownloadBlobResponse parses an HTTP response from a DownloadBlobWithResponse call
+func ParseDownloadBlobResponse(rsp *http.Response) (*DownloadBlobResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DownloadBlobResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -742,6 +1154,38 @@ func ParsePostNoteResponse(rsp *http.Response) (*PostNoteResponse, error) {
 	}
 
 	response := &PostNoteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseCreateProfileResponse parses an HTTP response from a CreateProfileWithResponse call
+func ParseCreateProfileResponse(rsp *http.Response) (*CreateProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetLatestReportResponse parses an HTTP response from a GetLatestReportWithResponse call
+func ParseGetLatestReportResponse(rsp *http.Response) (*GetLatestReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetLatestReportResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

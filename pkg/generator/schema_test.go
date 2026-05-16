@@ -11,6 +11,7 @@ package generator
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -173,6 +174,80 @@ func TestConvert_Required(t *testing.T) {
 	req, ok := got["required"].([]any)
 	if !ok || len(req) != 1 || req[0] != "name" {
 		t.Errorf("required: got %+v", got["required"])
+	}
+}
+
+func TestConvert_DiscriminatorHint(t *testing.T) {
+	doc := `
+openapi: 3.0.0
+info: {title: t, version: "0.0"}
+paths: {}
+components:
+  schemas:
+    Cat:
+      type: object
+      properties:
+        kind: {type: string}
+        purr: {type: boolean}
+    Dog:
+      type: object
+      properties:
+        kind: {type: string}
+        bark: {type: boolean}
+    Pet:
+      oneOf:
+        - $ref: "#/components/schemas/Cat"
+        - $ref: "#/components/schemas/Dog"
+      discriminator:
+        propertyName: kind
+        mapping:
+          cat: "#/components/schemas/Cat"
+          dog: "#/components/schemas/Dog"
+`
+	spec := parseSchemas(t, doc)
+
+	for _, mode := range []struct {
+		name          string
+		openAICompat  bool
+		mustNotInvent []string
+		mustHaveOneOf bool
+	}{
+		{"default", false, []string{"if", "then", "else"}, true},
+		{"openai-compat", true, []string{"if", "then", "else"}, false},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			c := NewSchemaConverter(mode.openAICompat)
+			c.Bind(spec)
+			got := c.Convert(spec.Components.Schemas["Pet"])
+			// Default mode hoists named components into $defs and returns a
+			// $ref; openai-compat inlines, so the hint lives on `got` itself.
+			petSchema := got
+			if !mode.openAICompat {
+				defs := c.Defs()
+				inDef, ok := defs["Pet"].(map[string]any)
+				if !ok {
+					t.Fatalf("expected Pet in $defs, got %+v", defs)
+				}
+				petSchema = inDef
+			}
+
+			desc, _ := petSchema["description"].(string)
+			for _, want := range []string{"Discriminator: kind", "Values: cat, dog"} {
+				if !strings.Contains(desc, want) {
+					t.Errorf("description missing %q\ngot %q", want, desc)
+				}
+			}
+			for _, banned := range mode.mustNotInvent {
+				if _, ok := petSchema[banned]; ok {
+					t.Errorf("discriminator hint must not invent %q keyword", banned)
+				}
+			}
+			if mode.mustHaveOneOf {
+				if _, ok := petSchema["oneOf"]; !ok {
+					t.Errorf("default mode should preserve oneOf alongside the hint")
+				}
+			}
+		})
 	}
 }
 

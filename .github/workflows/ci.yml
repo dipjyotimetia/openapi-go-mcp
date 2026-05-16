@@ -81,3 +81,32 @@ jobs:
 
       - name: Sanity check (Swagger 2.0 conversion)
         run: /tmp/openapi-gen-go-mcp -spec testdata/petstore-v2.json -list
+
+  examples:
+    name: Regen + build examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      # Pin oapi-codegen to the version that produced the checked-in generated
+      # code. Bump intentionally when refreshing examples; see TODO.md.
+      - name: Install oapi-codegen
+        run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0
+
+      - name: Regenerate examples
+        run: make regen-examples
+
+      - name: Verify regen produced no diff
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::make regen-examples produced changes; commit them after regenerating locally."
+            exit 1
+          fi
+
+      - name: Build all packages
+        run: go build ./...
