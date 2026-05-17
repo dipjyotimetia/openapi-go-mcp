@@ -19,7 +19,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
 
 type adapter struct {

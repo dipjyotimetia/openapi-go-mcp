@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `openapi-gen-go-mcp -h` (the binary version, or commit SHA if built from source)
+      description: Output of `openapi-go-mcp -h` (the binary version, or commit SHA if built from source)
       placeholder: v0.1.0
     validations:
       required: true

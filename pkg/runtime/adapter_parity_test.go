@@ -16,9 +16,9 @@ import (
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/mark3labs"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/mark3labs"
 )
 
 // echoHandler returns the decoded arguments verbatim as a JSON tool result,

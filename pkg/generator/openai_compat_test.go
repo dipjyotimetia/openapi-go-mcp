@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/loader"
 )
 
 // TestRender_OpenAICompat runs the generator with OpenAICompat=true across

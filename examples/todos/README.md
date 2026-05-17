@@ -1,6 +1,6 @@
 # `examples/todos` — end-to-end MCP example
 
-A realistic end-to-end demo for `openapi-gen-go-mcp`. Two separate binaries:
+A realistic end-to-end demo for `openapi-go-mcp`. Two separate binaries:
 
 - **`todos-server`** — a standalone HTTP service that implements [`todos.yaml`](./todos.yaml) on top of an in-memory store. Listens on `:8080` by default, logs every request, exposes `/healthz`, and shuts down gracefully on `SIGINT` / `SIGTERM`.
 - **`todos-mcp`** — an MCP proxy that speaks JSON-RPC over **stdio** with an MCP host (Claude Desktop, Cursor, …) and forwards every tool call to `todos-server` over HTTP via an [`oapi-codegen`](https://github.com/oapi-codegen/oapi-codegen) typed client.
@@ -257,11 +257,11 @@ Or just the todos pieces:
 ```bash
 oapi-codegen -config examples/todos/gen/todos/oapi.yaml examples/todos/todos.yaml
 
-go run ./cmd/openapi-gen-go-mcp \
+go run ./cmd/openapi-go-mcp \
     -spec examples/todos/todos.yaml \
     -out examples/todos/gen/todosmcp \
     -package todosmcp \
-    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todos
+    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/todos/gen/todos
 ```
 
 The MCP register-function name (`RegisterTodosAPIClient`) is derived from the spec's `info.title` (`Todos API` → `TodosAPI`). Change the title and `mcp/main.go` must follow.

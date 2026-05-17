@@ -17,9 +17,9 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/petstore/gen/pet"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/petstore/gen/petmcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/mark3labs"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/petstore/gen/pet"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/petstore/gen/petmcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/mark3labs"
 )
 
 // mark3labsHarness wires the same petstore generated code as the gosdk tests,

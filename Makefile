@@ -1,7 +1,12 @@
 .PHONY: build test test-race vet lint fmt tidy install regen-examples smoke clean release-snapshot
 
-BINARY := openapi-gen-go-mcp
+BINARY := openapi-go-mcp
 BIN_DIR := bin
+# Flags passed to every generator invocation in `regen-examples`. -force
+# tells the generator to overwrite the existing *.mcp.go files (which is
+# exactly what we want when regenerating); leaving it off would make
+# regen-examples fail on second run.
+GEN_FLAGS := -force
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -31,59 +36,59 @@ install:
 # Refresh every example's generated code. Requires oapi-codegen on PATH.
 regen-examples: build
 	oapi-codegen -config examples/petstore/gen/pet/oapi.yaml examples/petstore/petstore.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/petstore/petstore.yaml \
 	    -out examples/petstore/gen/petmcp \
 	    -package petmcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/petstore/gen/pet
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/petstore/gen/pet
 
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec testdata/petstore-v2.json \
 	    -emit-v3 examples/swagger2-petstore/petstore-v3.yaml
 	oapi-codegen -config examples/swagger2-petstore/gen/pet/oapi.yaml examples/swagger2-petstore/petstore-v3.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/swagger2-petstore/petstore-v3.yaml \
 	    -out examples/swagger2-petstore/gen/petmcp \
 	    -package petmcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/swagger2-petstore/gen/pet
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/swagger2-petstore/gen/pet
 
 	oapi-codegen -config examples/users-api/gen/users/oapi.yaml examples/users-api/users-api.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/users-api/users-api.yaml \
 	    -out examples/users-api/gen/usersmcp \
 	    -package usersmcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/users-api/gen/users
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/users-api/gen/users
 
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/library/library-v2.json \
 	    -emit-v3 examples/library/library-v3.yaml
 	oapi-codegen -config examples/library/gen/library/oapi.yaml examples/library/library-v3.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/library/library-v3.yaml \
 	    -out examples/library/gen/librarymcp \
 	    -package librarymcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/library/gen/library
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/library/gen/library
 
 	oapi-codegen -config examples/complex/gen/complex/oapi.yaml examples/complex/complex.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/complex/complex.yaml \
 	    -out examples/complex/gen/complexmcp \
 	    -package complexmcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/complex/gen/complex
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/complex/gen/complex
 
 	oapi-codegen -config examples/non-json-bodies/gen/nonjson/oapi.yaml examples/non-json-bodies/non-json-bodies.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/non-json-bodies/non-json-bodies.yaml \
 	    -out examples/non-json-bodies/gen/nonjsonmcp \
 	    -package nonjsonmcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/non-json-bodies/gen/nonjson
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/non-json-bodies/gen/nonjson
 
 	oapi-codegen -config examples/todos/gen/todos/oapi.yaml examples/todos/todos.yaml
-	$(BIN_DIR)/$(BINARY) \
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
 	    -spec examples/todos/todos.yaml \
 	    -out examples/todos/gen/todosmcp \
 	    -package todosmcp \
-	    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todos
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/todos/gen/todos
 
 # Quick smoke test: initialise the petstore (go-sdk) MCP server over stdio
 # and list tools. Use `make smoke-all` to exercise both backends.

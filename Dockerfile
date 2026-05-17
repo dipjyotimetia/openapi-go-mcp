@@ -7,9 +7,9 @@ FROM gcr.io/distroless/static-debian13:nonroot
 # context; BuildKit auto-populates TARGETOS and TARGETARCH per platform.
 ARG TARGETOS
 ARG TARGETARCH
-COPY ${TARGETOS}/${TARGETARCH}/openapi-gen-go-mcp /usr/local/bin/openapi-gen-go-mcp
+COPY ${TARGETOS}/${TARGETARCH}/openapi-go-mcp /usr/local/bin/openapi-go-mcp
 
 USER nonroot:nonroot
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/local/bin/openapi-gen-go-mcp"]
+ENTRYPOINT ["/usr/local/bin/openapi-go-mcp"]

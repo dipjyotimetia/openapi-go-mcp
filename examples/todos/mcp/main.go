@@ -31,9 +31,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todos"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/todos/gen/todosmcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/todos/gen/todos"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/todos/gen/todosmcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
 func main() {

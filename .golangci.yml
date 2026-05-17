@@ -31,7 +31,7 @@ linters:
   # Tests build subprocess commands and read fixtures from variable paths
   # to exercise the CLI surface — gosec's subprocess (G204) and file-include
   # (G304) checks are designed for production code, not the test harness.
-  # The mock HTTP servers in internal/e2e also produce JSON with simple
+  # The mock HTTP servers in tests/e2e also produce JSON with simple
   # string concatenation; that's not an XSS concern (G705) for test fixtures.
   exclusions:
     rules:
@@ -50,4 +50,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/dipjyotimetia/openapi-gen-go-mcp
+        - github.com/dipjyotimetia/openapi-go-mcp

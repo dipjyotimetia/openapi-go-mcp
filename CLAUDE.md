@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`openapi-gen-go-mcp` is a CLI code generator that consumes an OpenAPI 3.x or Swagger 2.0 spec and emits a Go file (`*.mcp.go`) which registers every operation in the spec as an MCP (Model Context Protocol) tool. Generated code delegates HTTP work to a user-supplied `oapi-codegen` typed client. It is the OpenAPI counterpart to `protoc-gen-go-mcp`.
+`openapi-go-mcp` is a CLI code generator that consumes an OpenAPI 3.x or Swagger 2.0 spec and emits a Go file (`*.mcp.go`) which registers every operation in the spec as an MCP (Model Context Protocol) tool. Generated code delegates HTTP work to a user-supplied `oapi-codegen` typed client. It is the OpenAPI counterpart to `protoc-gen-go-mcp`.
 
 The generator does not own the HTTP client — the user runs `oapi-codegen` to produce the typed client, then runs this tool to produce the MCP companion alongside it.
 
@@ -13,7 +13,7 @@ The generator does not own the HTTP client — the user runs `oapi-codegen` to p
 Standard dev loop (see `Makefile` for full list):
 
 ```bash
-make build           # builds CLI into ./bin/openapi-gen-go-mcp
+make build           # builds CLI into ./bin/openapi-go-mcp
 make test            # go test ./...
 make test-race       # go test ./... -race -count=1
 make vet             # go vet ./...
@@ -35,7 +35,7 @@ Refresh the generator golden file when output legitimately changes (then review 
 UPDATE_GOLDEN=1 go test ./pkg/generator/...
 ```
 
-End-to-end tests live in `internal/e2e/`. They exercise the generated example servers via the MCP stdio protocol; running them requires the example clients to already be generated (`make regen-examples` if you've changed the generator).
+End-to-end tests live in `tests/e2e/`. They exercise the generated example servers via the MCP stdio protocol; running them requires the example clients to already be generated (`make regen-examples` if you've changed the generator).
 
 CI runs on Go 1.26.x (matching the `go 1.26` directive in `go.mod`). Generated code itself only relies on standard-library features that have been available since Go 1.23, so downstream consumers can still compile the output against 1.23+.
 
@@ -44,15 +44,16 @@ CI runs on Go 1.26.x (matching the `go 1.26` directive in `go.mod`). Generated c
 Detailed package layout, data flow diagrams, and extension points are in `docs/architecture.md` — read it before making non-trivial changes to the generator or runtime. Deployment recipes are in `docs/usage-patterns.md`; the rationale behind non-obvious choices (companion codegen, grouped input schema, per-operation `$defs`, default-vs-OpenAI-strict schema dialect, JSON-only bodies) is in `docs/design-decisions.md` — consult it before changing those defaults. The short version:
 
 ```
-cmd/openapi-gen-go-mcp/  CLI entry point (flags → loader → generator)
-pkg/loader/              Spec ingestion: OpenAPI 3.x direct, Swagger 2.0 via openapi2conv
+cmd/openapi-go-mcp/  CLI entry point + batch orchestration loop
+pkg/loader/              Spec ingestion: OpenAPI 3.x direct, Swagger 2.0 via openapi2conv; ExpandSpecArg for glob/dir/comma input
+pkg/batch/               Per-spec option derivation (slug → PackageName/OutDir/ClientImport), collision detection
 pkg/generator/           Operation collection, JSON Schema conversion, text/template → gofmt
 pkg/runtime/             MCPServer interface + decoders + ApplyConfig (library-agnostic)
 pkg/runtime/gosdk/       Adapter for modelcontextprotocol/go-sdk
 pkg/runtime/mark3labs/   Adapter for mark3labs/mcp-go
 examples/                One end-to-end demo per backend / per spec dialect
 testdata/                Spec fixtures + golden generator output
-internal/e2e/            Black-box tests that drive the example servers over stdio
+tests/e2e/               Black-box tests that drive the example servers over stdio; CLI integration tests
 ```
 
 Two decoupling boundaries do most of the architectural work:
@@ -62,6 +63,8 @@ Two decoupling boundaries do most of the architectural work:
 2. **Per-operation `SchemaConverter`** — each operation gets its own converter so each tool's `$defs` are self-contained. A `nameByPtr` map is shared across converters within one `CollectOperations` call to avoid O(P·S) rebuild cost.
 
 The generator pipeline is: `loader.Load` → `generator.CollectOperations` (walks paths × methods, sorted) → `generator.Render` (text/template + gofmt) → writes `<out>/<pkg>.mcp.go`. Determinism (sorted iteration, gofmt, golden test) is a hard requirement — reviews depend on it.
+
+**Batch mode** sits in front of this pipeline rather than changing it. `loader.ExpandSpecArg` resolves the `-spec` value into a sorted, deduplicated list of `SpecRef`s; `batch.PlanFor` derives per-spec `generator.Options` from each filename stem (`PackageName=<slug>mcp`, `OutDir=<out>/<slug>mcp`, `ClientImport=<base>/<slug>` joined with forward slashes); `batch.DetectCollisions` aborts before any write if two specs share a slug. The single-spec pipeline then runs once per plan. Per-spec failures don't stop the run — they're accumulated and the process exits with `exitGenerate` (`3`) at the end so CI sees every failing spec in one run. `-package` and `-emit-v3` are rejected in batch mode (`exitUsage`); `-list` groups output under `=== <path> ===` headers per spec.
 
 ### Generated handler shape
 

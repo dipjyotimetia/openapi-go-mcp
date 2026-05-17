@@ -74,13 +74,13 @@ jobs:
           go-version: stable
 
       - name: Build
-        run: go build -o /tmp/openapi-gen-go-mcp ./cmd/openapi-gen-go-mcp
+        run: go build -o /tmp/openapi-go-mcp ./cmd/openapi-go-mcp
 
       - name: Sanity check (list operations)
-        run: /tmp/openapi-gen-go-mcp -spec testdata/petstore-v3.yaml -list
+        run: /tmp/openapi-go-mcp -spec testdata/petstore-v3.yaml -list
 
       - name: Sanity check (Swagger 2.0 conversion)
-        run: /tmp/openapi-gen-go-mcp -spec testdata/petstore-v2.json -list
+        run: /tmp/openapi-go-mcp -spec testdata/petstore-v2.json -list
 
   examples:
     name: Regen + build examples

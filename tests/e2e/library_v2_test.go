@@ -18,9 +18,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/library/gen/library"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/library/gen/librarymcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/library/gen/library"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/library/gen/librarymcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
 // libraryUpstream is the mock HTTP server for the Swagger-2.0-derived

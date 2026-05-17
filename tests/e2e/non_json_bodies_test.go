@@ -23,9 +23,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/non-json-bodies/gen/nonjson"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/non-json-bodies/gen/nonjsonmcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/non-json-bodies/gen/nonjson"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/non-json-bodies/gen/nonjsonmcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
 // newNonJSONUpstream returns a mock HTTP server covering every non-JSON body

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/token"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -20,8 +21,8 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
 
 // OpenAPI parameter "in" values. The spec defines these as enum strings; we
@@ -128,6 +129,16 @@ type Operation struct {
 	ResponseContentType string
 	// InputSchemaJSON is the encoded JSON Schema for the tool's input.
 	InputSchemaJSON string
+	// Security lists the security schemes the proxy template should
+	// apply to this operation. Populated only in ModeProxy; companion
+	// mode leaves the slice nil. Empty + Anonymous=true means "no auth";
+	// nil + Anonymous=false should not occur.
+	Security []SecurityScheme
+	// Anonymous is true when the operation is explicitly callable without
+	// credentials (operation-level `security: [{}]` or no security
+	// declared anywhere). Proxy template uses this to skip auth wiring
+	// entirely rather than producing a "credential not set" error.
+	Anonymous bool
 }
 
 // ParamField is a single OpenAPI parameter described enough to render Go code
@@ -162,9 +173,22 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 		return ops, sink.finalize(), nil
 	}
 
-	// Spec-wide diagnostics: callbacks/webhooks/security requirements at the
-	// document level (security scheme propagation is currently advisory).
-	emitSpecDiagnostics(doc, sink)
+	// Spec-wide diagnostics: callbacks/webhooks/security requirements at
+	// the document level. Proxy mode consumes the security requirement
+	// directly (env-var-driven auth), so we skip the informational
+	// "supply credentials manually" diagnostic in that mode — leaving it
+	// in would mislead users into thinking they still need to wire auth
+	// themselves.
+	emitSpecDiagnostics(doc, sink, opts.Mode)
+
+	// Proxy mode reads the spec's securitySchemes and wires auth into the
+	// generated code. Companion mode emits an info diagnostic instead
+	// (handled by emitSpecDiagnostics / buildOperation below) and leaves
+	// the parsed schemes unused.
+	var parsedSchemes []SecurityScheme
+	if opts.Mode == ModeProxy {
+		parsedSchemes = ParseSecuritySchemes(doc, sink)
+	}
 
 	// Pre-compute the component-schema name map once; every per-operation
 	// converter reuses it via Adopt.
@@ -179,6 +203,7 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 	}
 	sort.Strings(pathKeys)
 
+	defaultInclude := !opts.ExcludeByDefault
 	for _, path := range pathKeys {
 		item := paths[path]
 		opByMethod := item.Operations()
@@ -188,11 +213,19 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 		}
 		sort.Strings(methods)
 		for _, method := range methods {
+			specOp := opByMethod[method]
+			opPath := fmt.Sprintf("%s %s", method, path)
+			if !resolveXMCPInclusion(doc.Extensions, item.Extensions, specOp.Extensions, defaultInclude, opPath, sink) {
+				continue
+			}
 			conv := NewSchemaConverter(opts.OpenAICompat)
 			conv.Adopt(nameByPtr)
-			op, err := buildOperation(item, opByMethod[method], method, path, conv, opts, sink)
+			op, err := buildOperation(item, specOp, method, path, conv, opts, sink)
 			if err != nil {
 				return nil, sink.finalize(), fmt.Errorf("%s %s: %w", method, path, err)
+			}
+			if opts.Mode == ModeProxy {
+				op.Security, op.Anonymous = ResolveOperationSecurity(specOp, doc, parsedSchemes)
 			}
 			ops = append(ops, op)
 		}
@@ -200,10 +233,42 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 	return ops, sink.finalize(), nil
 }
 
+// resolveXMCPInclusion is the CollectOperations adapter around
+// includeOperation: it converts the (value, level, recognised) tuple into
+// an include/skip decision and routes informative diagnostics through the
+// sink so spec authors see exactly which level drove the choice. Returns
+// true when the operation should be generated.
+func resolveXMCPInclusion(rootExts, pathExts, opExts map[string]any, defaultInclude bool, opPath string, sink *diagSink) bool {
+	include, level, ok := includeOperation(rootExts, pathExts, opExts, defaultInclude)
+	if !ok {
+		// Unrecognised x-mcp value at `level`; surface the typo and fall
+		// through to the document-wide default the user intended.
+		sink.warn(DiagInvalidXMCPValue, opPath,
+			fmt.Sprintf("x-mcp extension at %s level is not a boolean; falling back to the document default (%v)", level, defaultInclude))
+		return defaultInclude
+	}
+	if !include {
+		// Info, not warning: x-mcp:false is the spec author asking us to
+		// skip this operation — exactly the documented behaviour.
+		reason := "default"
+		if level != xmcpLevelDefault {
+			reason = fmt.Sprintf("x-mcp:false at %s level", level)
+		}
+		sink.info(DiagExcludedByXMCP, opPath, fmt.Sprintf("operation excluded from MCP tool generation (%s)", reason))
+		return false
+	}
+	return true
+}
+
 // emitSpecDiagnostics records spec-wide findings that don't belong to a
 // single operation: server-variable substitutions the runtime can't perform,
 // and security requirements without an explicit credential consumer.
-func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink) {
+//
+// The mode argument lets us suppress the "supply credentials manually"
+// security advisory in proxy mode — proxy mode generates the auth wiring
+// from securitySchemes automatically, so the advisory would mislead users
+// into doing redundant work.
+func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink, mode Mode) {
 	for i, server := range doc.Servers {
 		if len(server.Variables) > 0 {
 			sink.info(DiagDroppedServerVariables,
@@ -211,18 +276,30 @@ func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink) {
 				fmt.Sprintf("server URL %q declares variables; supply substitutions via runtime.WithServerVariables when constructing the upstream client", server.URL))
 		}
 	}
+	if mode == ModeProxy {
+		// Proxy mode owns the credential plumbing; the "drop" diagnostic
+		// would be incorrect.
+		return
+	}
 	if len(doc.Security) > 0 {
-		schemes := []string{}
-		for _, req := range doc.Security {
-			for name := range req {
-				schemes = append(schemes, name)
-			}
-		}
-		sort.Strings(schemes)
 		sink.info(DiagDroppedSecurityRequirement,
 			"#/security",
-			"global security requirement is informational; supply credentials via runtime.WithExtraProperties or an HTTP client request editor. Schemes referenced: "+strings.Join(slices.Compact(schemes), ", "))
+			"global security requirement is informational; supply credentials via runtime.WithExtraProperties or an HTTP client request editor. Schemes referenced: "+strings.Join(dedupSchemeNames(doc.Security), ", "))
 	}
+}
+
+// dedupSchemeNames returns the alphabetically-sorted, deduplicated set of
+// security-scheme names referenced anywhere in reqs. OpenAPI's
+// SecurityRequirements is a slice of maps (the outer slice is "or",
+// the inner map is "and"); we flatten and dedupe for diagnostic output.
+func dedupSchemeNames(reqs openapi3.SecurityRequirements) []string {
+	seen := map[string]struct{}{}
+	for _, req := range reqs {
+		for name := range req {
+			seen[name] = struct{}{}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
@@ -271,16 +348,11 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		sink.warn(DiagDroppedCallback, opPath,
 			"callbacks are not modelled as MCP tools; dropped: "+strings.Join(names, ", "))
 	}
-	if op.Security != nil && len(*op.Security) > 0 {
-		schemes := []string{}
-		for _, req := range *op.Security {
-			for name := range req {
-				schemes = append(schemes, name)
-			}
-		}
-		sort.Strings(schemes)
+	if op.Security != nil && len(*op.Security) > 0 && opts.Mode != ModeProxy {
+		// Proxy mode wires this automatically from env vars; the diagnostic
+		// would mislead the user into doing redundant manual work.
 		sink.info(DiagDroppedSecurityRequirement, opPath,
-			"per-operation security requirement is informational; supply credentials via runtime.WithExtraProperties / request editor. Schemes: "+strings.Join(slices.Compact(schemes), ", "))
+			"per-operation security requirement is informational; supply credentials via runtime.WithExtraProperties / request editor. Schemes: "+strings.Join(dedupSchemeNames(*op.Security), ", "))
 	}
 
 	if op.RequestBody != nil && op.RequestBody.Value != nil {

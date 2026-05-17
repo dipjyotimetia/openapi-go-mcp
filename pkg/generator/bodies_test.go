@@ -17,7 +17,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/loader"
 )
 
 // renderNonJSONFixture loads testdata/non-json-bodies-v3.yaml and renders the

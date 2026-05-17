@@ -17,7 +17,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
 
 type adapter struct {

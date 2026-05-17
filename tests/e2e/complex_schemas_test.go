@@ -18,9 +18,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/complex/gen/complex"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/complex/gen/complexmcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/complex/gen/complex"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/complex/gen/complexmcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
 type complexUpstream struct {

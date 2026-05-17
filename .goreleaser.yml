@@ -1,4 +1,4 @@
-# GoReleaser config for openapi-gen-go-mcp.
+# GoReleaser config for openapi-go-mcp.
 #
 # Triggered by .github/workflows/release.yml on tag push (`v*`). Produces:
 #   - cross-compiled binaries for darwin/linux/windows × amd64/arm64
@@ -10,7 +10,7 @@
 # Validate locally with: goreleaser release --snapshot --clean --skip=publish
 version: 2
 
-project_name: openapi-gen-go-mcp
+project_name: openapi-go-mcp
 
 before:
   hooks:
@@ -18,9 +18,9 @@ before:
     - go vet ./...
 
 builds:
-  - id: openapi-gen-go-mcp
-    main: ./cmd/openapi-gen-go-mcp
-    binary: openapi-gen-go-mcp
+  - id: openapi-go-mcp
+    main: ./cmd/openapi-go-mcp
+    binary: openapi-go-mcp
     env:
       - CGO_ENABLED=0
     flags:
@@ -72,7 +72,7 @@ changelog:
 
 dockers_v2:
   - images:
-      - "ghcr.io/dipjyotimetia/openapi-gen-go-mcp"
+      - "ghcr.io/dipjyotimetia/openapi-go-mcp"
     tags:
       - "{{ .Version }}"
       - "latest"
@@ -83,24 +83,24 @@ dockers_v2:
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
       org.opencontainers.image.description: "OpenAPI → Go MCP code generator"
-      org.opencontainers.image.source: "https://github.com/dipjyotimetia/openapi-gen-go-mcp"
+      org.opencontainers.image.source: "https://github.com/dipjyotimetia/openapi-go-mcp"
       org.opencontainers.image.licenses: "Apache-2.0"
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .Date }}"
 
 homebrew_casks:
-  - name: openapi-gen-go-mcp
+  - name: openapi-go-mcp
     repository:
       owner: dipjyotimetia
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
-    homepage: "https://github.com/dipjyotimetia/openapi-gen-go-mcp"
+    homepage: "https://github.com/dipjyotimetia/openapi-go-mcp"
     description: "OpenAPI 3.x / Swagger 2.0 → Go MCP code generator"
     binaries:
-      - openapi-gen-go-mcp
+      - openapi-go-mcp
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
@@ -108,21 +108,21 @@ homebrew_casks:
 release:
   github:
     owner: dipjyotimetia
-    name: openapi-gen-go-mcp
+    name: openapi-go-mcp
   draft: false
   prerelease: auto
   name_template: "v{{ .Version }}"
   header: |
-    ## openapi-gen-go-mcp {{ .Tag }}
+    ## openapi-go-mcp {{ .Tag }}
 
     Install via Homebrew:
     ```
-    brew install dipjyotimetia/tap/openapi-gen-go-mcp
+    brew install dipjyotimetia/tap/openapi-go-mcp
     ```
 
     Or pull the container image:
     ```
-    docker pull ghcr.io/dipjyotimetia/openapi-gen-go-mcp:{{ .Version }}
+    docker pull ghcr.io/dipjyotimetia/openapi-go-mcp:{{ .Version }}
     ```
 
     Or grab a binary from the assets below.

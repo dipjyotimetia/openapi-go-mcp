@@ -30,16 +30,49 @@ import (
 // returns the diagnostics collected during rendering so the CLI can surface
 // them after a successful write.
 func generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
-	src, diags, err := RenderWithDiagnostics(doc, opts)
+	src, ops, diags, err := renderWithOps(doc, opts)
 	if err != nil {
 		return diags, err
 	}
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return diags, fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
 	}
-	outPath := filepath.Join(opts.OutDir, opts.PackageName+".mcp.go")
+	// In proxy mode the output is a runnable Go module: main.go (package
+	// main) lives at OutDir, and the generated MCP file lives in a
+	// subdirectory matching its package name. Companion mode keeps the
+	// flat layout (one file, no main) for backwards compatibility.
+	pkgDir := opts.OutDir
+	if opts.Mode == ModeProxy {
+		pkgDir = filepath.Join(opts.OutDir, opts.PackageName)
+		if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+			return diags, fmt.Errorf("mkdir %s: %w", pkgDir, err)
+		}
+	}
+	outPath := filepath.Join(pkgDir, opts.PackageName+".mcp.go")
+	info, statErr := os.Stat(outPath)
+	switch {
+	case statErr == nil && info.IsDir():
+		// A directory at the output path is rejected even with -force.
+		// Removing it would be far more destructive than overwriting a
+		// file, and the user almost certainly did not intend it.
+		return diags, fmt.Errorf("output path %s exists and is a directory", outPath)
+	case statErr == nil && !opts.Force:
+		return diags, fmt.Errorf("output file %s already exists; pass -force to overwrite", outPath)
+	case statErr != nil && !os.IsNotExist(statErr):
+		return diags, fmt.Errorf("stat %s: %w", outPath, statErr)
+	}
 	if err := os.WriteFile(outPath, src, 0o644); err != nil {
 		return diags, fmt.Errorf("write %s: %w", outPath, err)
+	}
+
+	// Proxy mode bundles a runnable main.go + go.mod + README alongside the
+	// .mcp.go so the output is a complete Go module the user can `go build`.
+	// Companion mode skips this; WriteScaffold is itself a no-op there. Ops
+	// are reused from the render step so we don't re-walk the spec.
+	if opts.Mode == ModeProxy {
+		if err := WriteScaffold(opts, doc, collectUsedSchemes(ops)); err != nil {
+			return diags, fmt.Errorf("scaffold: %w", err)
+		}
 	}
 	return diags, nil
 }
@@ -57,50 +90,120 @@ func Render(doc *openapi3.T, opts Options) ([]byte, error) {
 // slice is also non-nil when err != nil so callers can inspect what was
 // collected before the failure point.
 func RenderWithDiagnostics(doc *openapi3.T, opts Options) ([]byte, []Diagnostic, error) {
+	src, _, diags, err := renderWithOps(doc, opts)
+	return src, diags, err
+}
+
+// renderWithOps is the shared worker behind Render / RenderWithDiagnostics /
+// generate. It returns the rendered source plus the resolved []Operation so
+// callers that also need the operation list (e.g. the scaffold writer) don't
+// have to walk the spec a second time. Exported callers receive the same
+// data via the wrappers above.
+func renderWithOps(doc *openapi3.T, opts Options) ([]byte, []Operation, []Diagnostic, error) {
 	if err := opts.normalize(doc); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	ops, diags, err := CollectOperations(doc, opts)
 	if err != nil {
-		return nil, diags, err
+		return nil, nil, diags, err
 	}
 
-	clientAlias := path.Base(opts.ClientImport)
-	if err := validateClientAlias(clientAlias); err != nil {
-		return nil, diags, err
-	}
 	if err := validateNoSchemaConstCollisions(ops); err != nil {
-		return nil, diags, err
+		return nil, nil, diags, err
+	}
+
+	var (
+		tmplSrc      string
+		clientAlias  string
+		clientImport string
+		extraImports []string
+		baseDefault  string
+		allSchemes   []SecurityScheme
+	)
+	switch opts.Mode {
+	case ModeProxy:
+		// Proxy mode doesn't import an oapi-codegen package; ClientImport/
+		// ClientAlias are unused in the template. Aggregating the union of
+		// security schemes referenced by any operation gives the template
+		// the deduplicated list it needs to emit apply<Scheme>Auth helpers.
+		tmplSrc = fileTemplateProxy
+		baseDefault = defaultBaseURL(doc)
+		allSchemes = collectUsedSchemes(ops)
+	default:
+		clientAlias = path.Base(opts.ClientImport)
+		if err := validateClientAlias(clientAlias); err != nil {
+			return nil, nil, diags, err
+		}
+		clientImport = opts.ClientImport
+		extraImports = collectExtraImports(ops)
+		tmplSrc = fileTemplate
 	}
 
 	view := templateView{
-		PackageName:  opts.PackageName,
-		ClientImport: opts.ClientImport,
-		ClientAlias:  clientAlias,
-		ClientType:   opts.ClientType,
-		RegisterFunc: registerFuncName(doc),
-		StaticPrefix: opts.NamePrefix,
-		SpecSource:   describeSource(doc),
-		Ops:          ops,
-		ExtraImports: collectExtraImports(ops),
+		PackageName:    opts.PackageName,
+		ClientImport:   clientImport,
+		ClientAlias:    clientAlias,
+		ClientType:     opts.ClientType,
+		RegisterFunc:   registerFuncName(doc),
+		StaticPrefix:   opts.NamePrefix,
+		SpecSource:     describeSource(doc),
+		Ops:            ops,
+		ExtraImports:   extraImports,
+		BaseURLDefault: baseDefault,
+		AllSchemes:     allSchemes,
 	}
 
-	tmpl, err := template.New("mcp").Funcs(templateFuncs()).Parse(fileTemplate)
+	tmpl, err := template.New("mcp").Funcs(templateFuncs()).Parse(tmplSrc)
 	if err != nil {
-		return nil, diags, fmt.Errorf("parse template: %w", err)
+		return nil, nil, diags, fmt.Errorf("parse template: %w", err)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, view); err != nil {
-		return nil, diags, fmt.Errorf("execute template: %w", err)
+		return nil, nil, diags, fmt.Errorf("execute template: %w", err)
 	}
 
 	formatted, err := format.Source(buf.Bytes())
 	if err != nil {
 		// Return the unformatted source so the caller can inspect the failure.
-		return buf.Bytes(), diags, fmt.Errorf("gofmt: %w", err)
+		return buf.Bytes(), ops, diags, fmt.Errorf("gofmt: %w", err)
 	}
-	return formatted, diags, nil
+	return formatted, ops, diags, nil
+}
+
+// defaultBaseURL returns the spec's first declared server URL, or "" when
+// the spec has no servers[]. Proxy mode falls back to this string when
+// API_BASE_URL is unset; if both are empty the generated handler returns
+// a runtime error pointing at the env var. Server variables are left as
+// {placeholders} for the runtime to expand via SubstituteServerVariables
+// (called by the generated main.go, not here).
+func defaultBaseURL(doc *openapi3.T) string {
+	if doc == nil || len(doc.Servers) == 0 || doc.Servers[0] == nil {
+		return ""
+	}
+	return doc.Servers[0].URL
+}
+
+// collectUsedSchemes returns the deduplicated union of security schemes
+// referenced by any operation in ops, in stable Name order. Used by the
+// proxy template to emit one apply<Scheme>Auth helper per scheme regardless
+// of how many operations reference it.
+func collectUsedSchemes(ops []Operation) []SecurityScheme {
+	seen := make(map[string]SecurityScheme)
+	for _, op := range ops {
+		for _, s := range op.Security {
+			seen[s.Name] = s
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]SecurityScheme, 0, len(seen))
+	for _, v := range seen {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // Write writes the rendered source to w. Convenience for testing.
@@ -198,6 +301,14 @@ type templateView struct {
 	// declarations (e.g. openapi_types.UUID needs github.com/oapi-codegen/runtime/types).
 	// Each entry is `alias "path"` or just `"path"` when no alias is needed.
 	ExtraImports []string
+	// BaseURLDefault is the spec's first declared server URL; only populated
+	// in ModeProxy. The generated handler defaults to this string when
+	// API_BASE_URL is unset. Empty when the spec has no servers[].
+	BaseURLDefault string
+	// AllSchemes is the deduplicated set of security schemes referenced by
+	// any operation; only populated in ModeProxy. The proxy template emits
+	// one apply<Scheme>Auth helper per entry.
+	AllSchemes []SecurityScheme
 }
 
 // collectExtraImports walks every path parameter in ops and returns the sorted,

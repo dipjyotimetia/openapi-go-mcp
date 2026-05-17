@@ -1,12 +1,12 @@
-# Contributing to openapi-gen-go-mcp
+# Contributing to openapi-go-mcp
 
 Thanks for your interest in the project. This guide covers the dev loop, where to add features, and what to verify before opening a pull request.
 
 ## Dev setup
 
 ```bash
-git clone https://github.com/dipjyotimetia/openapi-gen-go-mcp
-cd openapi-gen-go-mcp
+git clone https://github.com/dipjyotimetia/openapi-go-mcp
+cd openapi-go-mcp
 go mod download
 ```
 
@@ -41,7 +41,7 @@ golangci-lint run                # installs from .golangci.yml
 ### Build the CLI
 
 ```bash
-go build -o bin/openapi-gen-go-mcp ./cmd/openapi-gen-go-mcp
+go build -o bin/openapi-go-mcp ./cmd/openapi-go-mcp
 ```
 
 ### Regenerate the example outputs
@@ -50,23 +50,23 @@ go build -o bin/openapi-gen-go-mcp ./cmd/openapi-gen-go-mcp
 # Petstore v3 (go-sdk + mark3labs share the same gen output)
 oapi-codegen -config examples/petstore/gen/pet/oapi.yaml \
     examples/petstore/petstore.yaml
-go run ./cmd/openapi-gen-go-mcp \
+go run ./cmd/openapi-go-mcp \
     -spec examples/petstore/petstore.yaml \
     -out examples/petstore/gen/petmcp \
     -package petmcp \
-    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/petstore/gen/pet
+    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/petstore/gen/pet
 
 # Swagger 2.0 — convert first, then run oapi-codegen
-go run ./cmd/openapi-gen-go-mcp \
+go run ./cmd/openapi-go-mcp \
     -spec testdata/petstore-v2.json \
     -emit-v3 examples/swagger2-petstore/petstore-v3.yaml
 oapi-codegen -config examples/swagger2-petstore/gen/pet/oapi.yaml \
     examples/swagger2-petstore/petstore-v3.yaml
-go run ./cmd/openapi-gen-go-mcp \
+go run ./cmd/openapi-go-mcp \
     -spec examples/swagger2-petstore/petstore-v3.yaml \
     -out examples/swagger2-petstore/gen/petmcp \
     -package petmcp \
-    -client-import github.com/dipjyotimetia/openapi-gen-go-mcp/examples/swagger2-petstore/gen/pet
+    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/swagger2-petstore/gen/pet
 ```
 
 ### Smoke-test an example as an MCP server

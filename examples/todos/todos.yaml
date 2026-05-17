@@ -4,7 +4,7 @@ info:
   title: Todos API
   description: |
     A small, self-contained todo-list API used as the canonical
-    end-to-end example for openapi-gen-go-mcp.
+    end-to-end example for openapi-go-mcp.
 
     The example process embeds an in-memory implementation of this
     API, so running `go run ./examples/todos` boots both the HTTP

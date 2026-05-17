@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-`openapi-gen-go-mcp` is pre-1.0 and currently supports security fixes only on the latest minor version. Once 1.0 ships, this section will list the supported branches.
+`openapi-go-mcp` is pre-1.0 and currently supports security fixes only on the latest minor version. Once 1.0 ships, this section will list the supported branches.
 
 | Version | Supported |
 |---------|-----------|
@@ -13,7 +13,7 @@
 
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
-Report privately via GitHub's [private vulnerability reporting](https://github.com/dipjyotimetia/openapi-gen-go-mcp/security/advisories/new) feature, or e-mail the maintainer (see `git log` for the author address).
+Report privately via GitHub's [private vulnerability reporting](https://github.com/dipjyotimetia/openapi-go-mcp/security/advisories/new) feature, or e-mail the maintainer (see `git log` for the author address).
 
 Include:
 

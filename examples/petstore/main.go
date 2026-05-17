@@ -26,9 +26,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/petstore/gen/pet"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/petstore/gen/petmcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/petstore/gen/pet"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/petstore/gen/petmcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
 func main() {

@@ -11,11 +11,11 @@
 // Workflow:
 //
 //  1. petstore.json is a Swagger 2.0 spec (testdata/petstore-v2.json).
-//  2. openapi-gen-go-mcp -emit-v3 converts it to OpenAPI 3 and prunes
+//  2. openapi-go-mcp -emit-v3 converts it to OpenAPI 3 and prunes
 //     non-JSON content types, since the rest of the pipeline only handles
 //     JSON.
 //  3. oapi-codegen generates a typed HTTP client from the converted spec.
-//  4. openapi-gen-go-mcp generates the MCP layer (./gen/petmcp).
+//  4. openapi-go-mcp generates the MCP layer (./gen/petmcp).
 //  5. This main.go wires the client + MCP layer into a stdio server via the
 //     official go-sdk adapter.
 package main
@@ -28,9 +28,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/swagger2-petstore/gen/pet"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/examples/swagger2-petstore/gen/petmcp"
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime/gosdk"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/swagger2-petstore/gen/pet"
+	"github.com/dipjyotimetia/openapi-go-mcp/examples/swagger2-petstore/gen/petmcp"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
 func main() {

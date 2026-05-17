@@ -56,6 +56,23 @@ const (
 	DiagMissingPathParam           = "missing-path-param"
 	DiagNestedMultipartEncoding    = "nested-multipart-encoding"
 	DiagContentTypeHeaderOverride  = "content-type-header-override"
+	// DiagExcludedByXMCP is emitted (info) when an operation is skipped due
+	// to an `x-mcp: false` extension at the operation, path-item, or
+	// document level. The Path field carries "<METHOD> <path>", the Message
+	// names the level that drove the decision.
+	DiagExcludedByXMCP = "excluded-by-x-mcp"
+	// DiagInvalidXMCPValue is emitted (warning) when an `x-mcp` extension
+	// value is neither a boolean nor a "true"/"false" string. The decision
+	// falls through to the next precedence level (or the document-wide
+	// default); the warning lets the spec author notice and fix typos like
+	// `x-mcp: "yes"` or `x-mcp: 1`.
+	DiagInvalidXMCPValue = "invalid-x-mcp-value"
+	// DiagUnsupportedSecurityScheme is emitted (warning) when a security
+	// scheme cannot be lowered into one of the kinds proxy mode wires
+	// (apiKey-header/query/cookie, http-bearer, http-basic, oauth2-as-bearer).
+	// The scheme is dropped from auth generation; companion mode is
+	// unaffected because it never consumes the parsed schemes anyway.
+	DiagUnsupportedSecurityScheme = "unsupported-security-scheme"
 )
 
 // diagSink collects diagnostics during a single CollectOperations run. It
@@ -81,7 +98,7 @@ func (s *diagSink) info(code, path, message string) {
 func (s *diagSink) emit(sev Severity, code, path, message string) {
 	s.out = append(s.out, Diagnostic{Severity: sev, Code: code, Path: path, Message: message})
 	if s.w != nil {
-		_, _ = fmt.Fprintf(s.w, "openapi-gen-go-mcp: %s: %s [%s]: %s\n", sev, path, code, message)
+		_, _ = fmt.Fprintf(s.w, "openapi-go-mcp: %s: %s [%s]: %s\n", sev, path, code, message)
 	}
 }
 

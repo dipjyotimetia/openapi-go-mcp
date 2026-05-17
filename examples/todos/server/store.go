@@ -40,7 +40,7 @@ type apiError struct {
 
 func newTodoStore() *todoStore {
 	s := &todoStore{items: map[int64]storedTodo{}}
-	s.create("Read the openapi-gen-go-mcp README", false)
+	s.create("Read the openapi-go-mcp README", false)
 	s.create("Try the todos example end-to-end", false)
 	s.create("Ship something cool", true)
 	return s

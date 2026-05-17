@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/loader"
 )
 
 // TestGolden_Petstore renders the petstore v3 fixture and compares the result

@@ -79,7 +79,7 @@ func unmarshalArgs(buf []byte) (map[string]any, error) {
 // underlying SDK's `_meta` channel to carry HTTP status + selected response
 // headers. Clients that consume `_meta` can read both without depending on
 // the runtime package.
-const HTTPMetaKey = "openapi-gen-go-mcp/http"
+const HTTPMetaKey = "openapi-go-mcp/http"
 
 // HTTPMeta is the shape written under HTTPMetaKey. Adapter packages convert
 // this into the SDK's native metadata representation.

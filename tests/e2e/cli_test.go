@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/loader"
 )
 
 // repoRoot resolves the module root by walking up from cwd until it finds a
@@ -61,13 +61,13 @@ func findRepoRoot() (string, error) {
 // Cleanup runs before os.Exit because deferred functions do not — see
 // gocritic's exitAfterDefer check.
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "openapi-gen-go-mcp-e2e-")
+	dir, err := os.MkdirTemp("", "openapi-go-mcp-e2e-")
 	if err != nil {
 		panic("create temp dir: " + err.Error())
 	}
 
-	cliPath = filepath.Join(dir, "openapi-gen-go-mcp")
-	cmd := exec.Command("go", "build", "-o", cliPath, "./cmd/openapi-gen-go-mcp")
+	cliPath = filepath.Join(dir, "openapi-go-mcp")
+	cmd := exec.Command("go", "build", "-o", cliPath, "./cmd/openapi-go-mcp")
 	root, err := findRepoRoot()
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -227,7 +227,7 @@ func TestCLI_Generate_ProducesCompilingFile(t *testing.T) {
 	for _, must := range []string{
 		"package petmcptest",
 		`"github.com/example/petstore"`,
-		`"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/runtime"`,
+		`"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"`,
 		"RegisterSwaggerPetstoreClient",
 	} {
 		if !strings.Contains(string(content), must) {

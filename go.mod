@@ -1,4 +1,4 @@
-module github.com/dipjyotimetia/openapi-gen-go-mcp
+module github.com/dipjyotimetia/openapi-go-mcp
 
 go 1.26
 

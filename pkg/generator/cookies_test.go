@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/loader"
 )
 
 func TestRender_CookieParams_EndToEnd(t *testing.T) {
