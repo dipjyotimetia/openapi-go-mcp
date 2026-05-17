@@ -13,11 +13,9 @@ import (
 )
 
 // _ silences "imported and not used" when an operation set omits some helpers.
-var (
-	_                 = json.RawMessage(nil)
-	_ context.Context = nil
-	_ http.Header     = nil
-)
+var _ = json.RawMessage(nil)
+var _ context.Context = nil
+var _ http.Header = nil
 
 // Compile-time check: the imported package must expose the expected client
 // interface. Generated code targets the typed-response variant by default.
@@ -174,6 +172,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			), nil
 		},
 	)
+
 }
 
 // headerOf returns r.Header when r is non-nil; returns nil otherwise so the

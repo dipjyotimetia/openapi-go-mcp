@@ -6,20 +6,17 @@ package complexmcp
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"net/http"
 
 	"github.com/dipjyotimetia/openapi-go-mcp/examples/complex/gen/complex"
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
 
 // _ silences "imported and not used" when an operation set omits some helpers.
-var (
-	_                 = json.RawMessage(nil)
-	_ context.Context = nil
-	_ http.Header     = nil
-)
+var _ = json.RawMessage(nil)
+var _ context.Context = nil
+var _ http.Header = nil
 
 // Compile-time check: the imported package must expose the expected client
 // interface. Generated code targets the typed-response variant by default.
@@ -148,6 +145,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			), nil
 		},
 	)
+
 }
 
 // headerOf returns r.Header when r is non-nil; returns nil otherwise so the
