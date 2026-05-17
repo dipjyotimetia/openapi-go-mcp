@@ -70,7 +70,10 @@ func PlanFor(ref loader.SpecRef, baseOpts generator.Options, batch bool) (SpecPl
 	pkgName := slug + generator.MCPPackageSuffix
 	opts := baseOpts
 	opts.PackageName = pkgName
+	// OutDir is a filesystem path → filepath.Join (OS-specific separator).
 	opts.OutDir = filepath.Join(baseOpts.OutDir, pkgName)
+	// ClientImport is a Go import path → path.Join (always forward slash,
+	// even on Windows, otherwise the generated source won't compile there).
 	opts.ClientImport = path.Join(baseOpts.ClientImport, slug)
 	return SpecPlan{Ref: ref, Slug: slug, Opts: opts}, nil
 }
@@ -109,9 +112,12 @@ func DetectCollisions(plans []SpecPlan) error {
 // becomes a Go package name segment and an oapi-codegen import suffix —
 // both of which must be valid identifiers / import names.
 //
-// Returns an error when the stem sanitises to the empty string. Callers
-// should surface this so the user can rename the offending file rather
-// than seeing a cryptic codegen failure downstream.
+// Returns an error when the stem sanitises to the empty string OR starts
+// with a digit. Go identifiers cannot start with a digit, so a stem like
+// "123-numeric" would slug to "123numeric" and produce a package name
+// "123numericmcp" that fails to compile. Callers should surface this so
+// the user can rename the offending file rather than seeing a cryptic
+// codegen failure downstream.
 func Slug(p string) (string, error) {
 	stem := filepath.Base(p)
 	if ext := filepath.Ext(stem); ext != "" {
@@ -126,5 +132,9 @@ func Slug(p string) (string, error) {
 	if b.Len() == 0 {
 		return "", fmt.Errorf("path %q has no alphanumeric stem; rename it to a [a-z0-9] form", p)
 	}
-	return b.String(), nil
+	s := b.String()
+	if s[0] >= '0' && s[0] <= '9' {
+		return "", fmt.Errorf("path %q produces slug %q which starts with a digit; Go package names cannot start with a digit — rename the file to begin with a letter", p, s)
+	}
+	return s, nil
 }

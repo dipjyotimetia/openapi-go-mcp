@@ -24,7 +24,6 @@ func TestSlug_FilenameStem(t *testing.T) {
 		"v1/users-api.json":        "usersapi",
 		"UPPER.YAML":               "upper",
 		"weird_chars!@#.yaml":      "weirdchars",
-		"123-numeric.yaml":         "123numeric",
 		"a.b.c.yaml":               "abc", // strip last ext only
 		"./relative/Spec.YAML":     "spec",
 		"with spaces in name.yaml": "withspacesinname",
@@ -51,6 +50,27 @@ func TestSlug_EmptyStemErrors(t *testing.T) {
 		_, err := Slug(in)
 		if err == nil {
 			t.Errorf("Slug(%q) expected error for empty stem", in)
+		}
+	}
+}
+
+func TestSlug_DigitLeadingStemErrors(t *testing.T) {
+	// Go package names cannot start with a digit. The Slug helper must
+	// reject these up-front rather than producing output (e.g. "999mcp")
+	// that fails to compile downstream.
+	cases := []string{
+		"999.yaml",
+		"123-numeric.yaml",
+		"2024-api.yaml",
+	}
+	for _, in := range cases {
+		_, err := Slug(in)
+		if err == nil {
+			t.Errorf("Slug(%q) expected error for digit-leading stem", in)
+			continue
+		}
+		if !strings.Contains(err.Error(), "digit") {
+			t.Errorf("Slug(%q) error should mention digit; got %v", in, err)
 		}
 	}
 }

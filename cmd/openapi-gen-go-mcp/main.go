@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/batch"
@@ -137,9 +138,10 @@ func run() int {
 
 	// Orchestrate. Errors are accumulated so a single bad spec doesn't
 	// stop the rest of the batch — CI gets a complete picture in one run.
+	cwd, _ := os.Getwd() // best-effort; empty cwd just disables relative rendering.
 	exitCode := exitOK
 	for _, plan := range plans {
-		prefix := plan.Ref.Path
+		prefix := displayPath(plan.Ref.Path, cwd)
 		doc, loadErr := loader.Load(ctx, plan.Ref.Path)
 		if loadErr != nil {
 			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp [%s]: load: %v\n", prefix, loadErr)
@@ -213,6 +215,35 @@ func countWarnings(diags []generator.Diagnostic) int {
 		}
 	}
 	return n
+}
+
+// displayPath renders abs as a path relative to cwd when the relative form
+// is shorter and doesn't escape the working directory with "..". URL
+// inputs (which `loader.ExpandSpecArg` returns untouched) and any path
+// where relative rendering would not help are returned verbatim. Used for
+// CLI log prefixes only — the underlying loader still operates on the
+// absolute path.
+func displayPath(abs, cwd string) string {
+	if cwd == "" {
+		return abs
+	}
+	if !filepath.IsAbs(abs) {
+		return abs
+	}
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil {
+		return abs
+	}
+	// Don't render paths that escape the working directory; "../../foo"
+	// is harder to scan than the absolute form.
+	if rel == "." || rel == ".." || filepath.IsAbs(rel) ||
+		(len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator)) {
+		return abs
+	}
+	if len(rel) >= len(abs) {
+		return abs
+	}
+	return rel
 }
 
 // resolveVersion returns the goreleaser-injected version when present, or

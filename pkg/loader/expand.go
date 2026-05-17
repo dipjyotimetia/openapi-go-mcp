@@ -196,21 +196,74 @@ func expandDir(dir string) ([]SpecRef, error) {
 }
 
 // splitCommaList splits a comma-separated list, trimming whitespace from
-// each entry and dropping empties. URL detection happens AFTER this, so a
-// comma inside an http URL would split surprisingly — but commas in URLs
-// are rare and trivially worked around by passing one URL at a time. Two
-// adjacent commas (",,") are silently elided so users can comment-out an
-// entry by deleting its name without leaving a syntax error.
+// each entry and dropping empties. Two adjacent commas (",,") are silently
+// elided so users can comment-out an entry by deleting its name without
+// leaving a syntax error.
+//
+// A token that starts with http(s):// is NOT split further on commas —
+// matrix params and some content-negotiation URLs legally contain commas,
+// and silently splitting them would produce confusing "matched no files"
+// errors. Once a URL token starts, we scan to the next top-level comma
+// that is followed by either end-of-input or another entry that is itself
+// trimmable to non-empty content. Practically: any commas appearing inside
+// what looks like a URL are kept verbatim; the next top-level entry must
+// be separated by ",<whitespace>" — same as before — for the split to
+// re-engage.
 func splitCommaList(s string) []string {
-	raw := strings.Split(s, ",")
-	out := make([]string, 0, len(raw))
-	for _, t := range raw {
-		t = strings.TrimSpace(t)
-		if t != "" {
-			out = append(out, t)
+	out := make([]string, 0, 4)
+	for len(s) > 0 {
+		s = strings.TrimLeft(s, ", \t")
+		if s == "" {
+			break
 		}
+		// If the next token is a URL, consume up to the FIRST comma that
+		// is followed by whitespace — that's our heuristic for "next CLI
+		// entry" vs "comma inside the URL". This is intentionally simple:
+		// users with truly hostile URLs can pass them one at a time.
+		if isHTTPURL(s) {
+			end := findURLBoundary(s)
+			tok := strings.TrimSpace(s[:end])
+			if tok != "" {
+				out = append(out, tok)
+			}
+			s = s[end:]
+			continue
+		}
+		idx := strings.IndexByte(s, ',')
+		if idx < 0 {
+			tok := strings.TrimSpace(s)
+			if tok != "" {
+				out = append(out, tok)
+			}
+			break
+		}
+		tok := strings.TrimSpace(s[:idx])
+		if tok != "" {
+			out = append(out, tok)
+		}
+		s = s[idx+1:]
 	}
 	return out
+}
+
+// findURLBoundary returns the index in s where the URL token ends. The
+// heuristic: the URL extends to the next ",<whitespace>" sequence, or to
+// end-of-string. A bare "," with no trailing whitespace is assumed to be
+// part of the URL (matrix params, OData, etc.).
+func findURLBoundary(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] != ',' {
+			continue
+		}
+		if i+1 >= len(s) {
+			return i
+		}
+		next := s[i+1]
+		if next == ' ' || next == '\t' {
+			return i
+		}
+	}
+	return len(s)
 }
 
 func hasGlobMeta(s string) bool {

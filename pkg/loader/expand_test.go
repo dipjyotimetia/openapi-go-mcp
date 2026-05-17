@@ -183,6 +183,36 @@ func TestExpandSpecArg_CommaSeparated(t *testing.T) {
 	}
 }
 
+func TestExpandSpecArg_CommaInsideURLNotSplit(t *testing.T) {
+	// URLs may legally contain commas (matrix params, OData $select=a,b).
+	// splitCommaList must treat the whole URL token as one entry rather
+	// than splitting it into garbage. The boundary heuristic is "comma
+	// followed by whitespace = next entry".
+	in := "https://example.com/api?ids=1,2,3 , https://other.example/spec.yaml"
+	refs, err := ExpandSpecArg(in)
+	if err != nil {
+		t.Fatalf("ExpandSpecArg: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 URL refs (commas inside the first URL must not split it); got %d: %+v", len(refs), refs)
+	}
+	if !refs[0].IsURL || !refs[1].IsURL {
+		t.Errorf("both entries should be URLs; got %+v", refs)
+	}
+	wantFirst := "https://example.com/api?ids=1,2,3"
+	wantSecond := "https://other.example/spec.yaml"
+	// Output is sorted by Path; both URLs are deterministic.
+	got := []string{refs[0].Path, refs[1].Path}
+	sort.Strings(got)
+	want := []string{wantFirst, wantSecond}
+	sort.Strings(want)
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("URL %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestExpandSpecArg_CommaDeduplicates(t *testing.T) {
 	// The same file referenced twice (e.g. once directly, once via a
 	// directory walk) must collapse to a single entry so the generator

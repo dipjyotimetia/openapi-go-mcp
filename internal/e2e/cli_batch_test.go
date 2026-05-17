@@ -282,6 +282,80 @@ func TestCLI_Batch_SlugCollisionRejected(t *testing.T) {
 	}
 }
 
+// specWithBadXMCP returns a tiny OpenAPI 3 document carrying an
+// unrecognised `x-mcp` value. That value produces an `invalid-x-mcp-value`
+// warning during generation — exactly the trigger needed to test the
+// -warnings-as-errors flag.
+func specWithBadXMCP(opID string) string {
+	return `openapi: 3.0.0
+info:
+  title: ` + opID + `
+  version: "1.0"
+paths:
+  /thing:
+    get:
+      operationId: ` + opID + `
+      x-mcp: maybe
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+`
+}
+
+func TestCLI_Batch_WarningsAsErrors(t *testing.T) {
+	// One good spec + one spec that emits a warning during generation.
+	// With -warnings-as-errors the run must finish (no spec is rejected
+	// outright) but exit with code 4. The good spec's output must still
+	// land on disk — warnings escalate to non-zero exit, not "abort the
+	// remaining work".
+	specDir := t.TempDir()
+	outDir := t.TempDir()
+	mustWriteSpec(t, filepath.Join(specDir, "good.yaml"), minimalSpec("goodOp"))
+	mustWriteSpec(t, filepath.Join(specDir, "warny.yaml"), specWithBadXMCP("warnyOp"))
+
+	_, stderr, err := runCLI(t,
+		"-spec", specDir,
+		"-out", outDir,
+		"-client-import", "example.com/g",
+		"-warnings-as-errors",
+	)
+	if got := exitCode(err); got != 4 {
+		t.Fatalf("expected exit code 4 (exitWarningsError), got %d\nstderr=%s", got, stderr)
+	}
+	if !strings.Contains(stderr, "invalid-x-mcp-value") {
+		t.Errorf("stderr should mention the warning code; got %s", stderr)
+	}
+	// Good spec's output must exist — warnings are an exit-code signal,
+	// not a reason to skip remaining work.
+	if _, err := os.Stat(filepath.Join(outDir, "goodmcp", "goodmcp.mcp.go")); err != nil {
+		t.Errorf("warning-as-error run should still produce non-warning specs' output: %v", err)
+	}
+}
+
+func TestCLI_Batch_GenerateFailureTrumpsWarning(t *testing.T) {
+	// When a batch run has BOTH a warning-laden spec and an outright
+	// failure, the exit code must be 3 (exitGenerate) — not 4
+	// (exitWarningsError). The contract is "the strongest failure wins".
+	specDir := t.TempDir()
+	outDir := t.TempDir()
+	mustWriteSpec(t, filepath.Join(specDir, "warny.yaml"), specWithBadXMCP("warnyOp"))
+	mustWriteSpec(t, filepath.Join(specDir, "broken.yaml"), "not: a: valid: openapi: spec\n")
+
+	_, stderr, err := runCLI(t,
+		"-spec", specDir,
+		"-out", outDir,
+		"-client-import", "example.com/g",
+		"-warnings-as-errors",
+	)
+	if got := exitCode(err); got != 3 {
+		t.Fatalf("expected exit code 3 (exitGenerate trumps exitWarningsError), got %d\nstderr=%s", got, stderr)
+	}
+}
+
 func TestCLI_Batch_SingleSpecBehavesAsBefore(t *testing.T) {
 	// A single matching spec must NOT enter batch mode — the existing
 	// -package flag still works and output lands directly in -out (no
