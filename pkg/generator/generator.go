@@ -19,8 +19,36 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+// Mode selects which output shape the generator emits.
+type Mode string
+
+const (
+	// ModeCompanion is the default mode: emit a single *.mcp.go that
+	// delegates to a user-supplied oapi-codegen client. Companion files
+	// drop into an existing module; the user writes main(). Backwards-
+	// compatible with every previous release; the golden test pins it
+	// byte-for-byte.
+	ModeCompanion Mode = ""
+	// ModeProxy emits a runnable Go module: <pkg>.mcp.go plus main.go,
+	// go.mod, and README.md. The generated handlers build *http.Request
+	// objects directly and dispatch through cfg.HTTPClient, with
+	// authentication wired from the spec's securitySchemes via env vars.
+	// No oapi-codegen step is needed.
+	ModeProxy Mode = "proxy"
+)
+
 // Options configures Generate.
 type Options struct {
+	// Mode selects the output shape. Zero value = ModeCompanion (today's
+	// behaviour). ModeProxy emits a runnable module with built-in auth.
+	Mode Mode
+	// ModulePath is the Go module path used in the generated go.mod when
+	// Mode == ModeProxy. Required in proxy mode; rejected in companion.
+	ModulePath string
+	// SDK picks which MCP SDK adapter the generated main.go imports.
+	// Valid: "gosdk" (default) or "mark3labs". Only consulted when
+	// Mode == ModeProxy; companion mode is SDK-agnostic.
+	SDK string
 	// OutDir is the directory where the generated *.mcp.go file is written.
 	OutDir string
 	// PackageName is the Go package name for the generated file. If empty,
@@ -105,11 +133,29 @@ func Generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
 }
 
 // normalize fills in optional fields with their defaults and returns an
-// error when a required field (currently just ClientImport) is missing.
-// Centralising defaulting prevents Render and Generate from drifting.
+// error when a required field is missing. Required fields differ by
+// Mode: companion mode needs ClientImport (the oapi-codegen package);
+// proxy mode needs ModulePath instead (the module path for the emitted
+// go.mod) and ignores ClientImport. Centralising defaulting prevents
+// Render and Generate from drifting.
 func (opts *Options) normalize(doc *openapi3.T) error {
-	if opts.ClientImport == "" {
-		return fmt.Errorf("ClientImport is required")
+	switch opts.Mode {
+	case ModeCompanion:
+		if opts.ClientImport == "" {
+			return fmt.Errorf("ClientImport is required in companion mode")
+		}
+	case ModeProxy:
+		if opts.ModulePath == "" {
+			return fmt.Errorf("ModulePath is required in proxy mode (the import path written into the generated go.mod)")
+		}
+		if opts.SDK == "" {
+			opts.SDK = "gosdk"
+		}
+		if opts.SDK != "gosdk" && opts.SDK != "mark3labs" {
+			return fmt.Errorf("SDK must be \"gosdk\" or \"mark3labs\"; got %q", opts.SDK)
+		}
+	default:
+		return fmt.Errorf("unknown Mode %q", opts.Mode)
 	}
 	if opts.ClientType == "" {
 		opts.ClientType = "ClientWithResponsesInterface"

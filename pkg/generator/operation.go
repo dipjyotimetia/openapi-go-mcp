@@ -128,6 +128,16 @@ type Operation struct {
 	ResponseContentType string
 	// InputSchemaJSON is the encoded JSON Schema for the tool's input.
 	InputSchemaJSON string
+	// Security lists the security schemes the proxy template should
+	// apply to this operation. Populated only in ModeProxy; companion
+	// mode leaves the slice nil. Empty + Anonymous=true means "no auth";
+	// nil + Anonymous=false should not occur.
+	Security []SecurityScheme
+	// Anonymous is true when the operation is explicitly callable without
+	// credentials (operation-level `security: [{}]` or no security
+	// declared anywhere). Proxy template uses this to skip auth wiring
+	// entirely rather than producing a "credential not set" error.
+	Anonymous bool
 }
 
 // ParamField is a single OpenAPI parameter described enough to render Go code
@@ -162,9 +172,22 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 		return ops, sink.finalize(), nil
 	}
 
-	// Spec-wide diagnostics: callbacks/webhooks/security requirements at the
-	// document level (security scheme propagation is currently advisory).
-	emitSpecDiagnostics(doc, sink)
+	// Spec-wide diagnostics: callbacks/webhooks/security requirements at
+	// the document level. Proxy mode consumes the security requirement
+	// directly (env-var-driven auth), so we skip the informational
+	// "supply credentials manually" diagnostic in that mode — leaving it
+	// in would mislead users into thinking they still need to wire auth
+	// themselves.
+	emitSpecDiagnostics(doc, sink, opts.Mode)
+
+	// Proxy mode reads the spec's securitySchemes and wires auth into the
+	// generated code. Companion mode emits an info diagnostic instead
+	// (handled by emitSpecDiagnostics / buildOperation below) and leaves
+	// the parsed schemes unused.
+	var parsedSchemes []SecurityScheme
+	if opts.Mode == ModeProxy {
+		parsedSchemes = ParseSecuritySchemes(doc, sink)
+	}
 
 	// Pre-compute the component-schema name map once; every per-operation
 	// converter reuses it via Adopt.
@@ -199,6 +222,9 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 			op, err := buildOperation(item, specOp, method, path, conv, opts, sink)
 			if err != nil {
 				return nil, sink.finalize(), fmt.Errorf("%s %s: %w", method, path, err)
+			}
+			if opts.Mode == ModeProxy {
+				op.Security, op.Anonymous = ResolveOperationSecurity(specOp, doc, parsedSchemes)
 			}
 			ops = append(ops, op)
 		}
@@ -236,13 +262,23 @@ func resolveXMCPInclusion(rootExts, pathExts, opExts map[string]any, defaultIncl
 // emitSpecDiagnostics records spec-wide findings that don't belong to a
 // single operation: server-variable substitutions the runtime can't perform,
 // and security requirements without an explicit credential consumer.
-func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink) {
+//
+// The mode argument lets us suppress the "supply credentials manually"
+// security advisory in proxy mode — proxy mode generates the auth wiring
+// from securitySchemes automatically, so the advisory would mislead users
+// into doing redundant work.
+func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink, mode Mode) {
 	for i, server := range doc.Servers {
 		if len(server.Variables) > 0 {
 			sink.info(DiagDroppedServerVariables,
 				fmt.Sprintf("servers[%d]", i),
 				fmt.Sprintf("server URL %q declares variables; supply substitutions via runtime.WithServerVariables when constructing the upstream client", server.URL))
 		}
+	}
+	if mode == ModeProxy {
+		// Proxy mode owns the credential plumbing; the "drop" diagnostic
+		// would be incorrect.
+		return
 	}
 	if len(doc.Security) > 0 {
 		schemes := []string{}
@@ -304,7 +340,10 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		sink.warn(DiagDroppedCallback, opPath,
 			"callbacks are not modelled as MCP tools; dropped: "+strings.Join(names, ", "))
 	}
-	if op.Security != nil && len(*op.Security) > 0 {
+	if op.Security != nil && len(*op.Security) > 0 && opts.Mode != ModeProxy {
+		// Proxy mode wires per-op security automatically via env vars;
+		// suppress the informational "drop" diagnostic there to avoid
+		// telling the user to do redundant manual work.
 		schemes := []string{}
 		for _, req := range *op.Security {
 			for name := range req {

@@ -72,9 +72,16 @@ func PlanFor(ref loader.SpecRef, baseOpts generator.Options, batch bool) (SpecPl
 	opts.PackageName = pkgName
 	// OutDir is a filesystem path → filepath.Join (OS-specific separator).
 	opts.OutDir = filepath.Join(baseOpts.OutDir, pkgName)
-	// ClientImport is a Go import path → path.Join (always forward slash,
-	// even on Windows, otherwise the generated source won't compile there).
-	opts.ClientImport = path.Join(baseOpts.ClientImport, slug)
+	// ClientImport (companion) and ModulePath (proxy) are Go import paths
+	// → path.Join (always forward slash, even on Windows, otherwise the
+	// generated source won't compile there). We append the slug in both
+	// modes; the unused field per mode is ignored downstream.
+	if baseOpts.ClientImport != "" {
+		opts.ClientImport = path.Join(baseOpts.ClientImport, slug)
+	}
+	if baseOpts.ModulePath != "" {
+		opts.ModulePath = path.Join(baseOpts.ModulePath, slug)
+	}
 	return SpecPlan{Ref: ref, Slug: slug, Opts: opts}, nil
 }
 

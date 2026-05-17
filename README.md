@@ -53,6 +53,31 @@ Verify with `openapi-gen-go-mcp -version`. Generated code targets Go 1.23+.
 
 ## Quick start
 
+Two emission modes. Pick **proxy** for a turnkey server you can `go build && ./server`, or **companion** to embed the MCP layer in an existing module alongside your own `oapi-codegen` clients.
+
+### Proxy mode (zero-boilerplate runnable server)
+
+```bash
+# One command. Produces a complete Go module: main.go + go.mod + <pkg>/<pkg>.mcp.go + README.md.
+openapi-gen-go-mcp \
+    -mode=proxy \
+    -spec petstore.yaml \
+    -out gen/petstore-mcp \
+    -module github.com/me/petstore-mcp
+
+cd gen/petstore-mcp
+go mod tidy
+go build
+
+# Auth credentials come from environment variables derived from the spec's
+# securitySchemes. The generated README.md lists the env var per scheme.
+BEARER_TOKEN_BEARERAUTH=xxx ./petstore-mcp        # serves MCP on stdio
+```
+
+The spec's `servers[0].url` is the default upstream base URL; override with `API_BASE_URL`. The generated server validates inputs against the JSON Schema derived from the spec, signs the upstream request with credentials from env vars, and surfaces HTTP responses (including non-2xx status + headers) as MCP tool results.
+
+### Companion mode (embed into an existing Go service)
+
 ```bash
 # 1. Generate the oapi-codegen HTTP client for your OpenAPI spec.
 oapi-codegen -generate types,client -package pet -o gen/pet/pet.gen.go petstore.yaml
@@ -85,6 +110,8 @@ func main() {
     _ = raw.Run(context.Background(), &mcp.StdioTransport{})
 }
 ```
+
+You write `main.go`, you own the HTTP transport (custom retries, tracing, mTLS, etc. flow naturally through your `oapi-codegen` client), and auth is your code's responsibility. Use this mode when the MCP layer is one feature of a larger service binary.
 
 ## CLI
 

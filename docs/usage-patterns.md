@@ -322,6 +322,73 @@ import path.
   (not directories), so a stray symlink can't escape the user's intended
   tree.
 
+## Pattern 13 — Standalone proxy server (zero-boilerplate)
+
+You have an OpenAPI/Swagger spec and credentials in env vars. You want a
+binary that exposes the API as MCP tools, with no Go code to write and no
+`oapi-codegen` step to wire up.
+
+```bash
+openapi-gen-go-mcp \
+    -mode=proxy \
+    -spec petstore.yaml \
+    -out gen/petstore-mcp \
+    -module github.com/me/petstore-mcp
+
+cd gen/petstore-mcp
+go mod tidy
+go build
+
+# Credentials come from env vars derived from the spec's securitySchemes.
+# The generated README lists the env var per scheme.
+BEARER_TOKEN_BEARERAUTH=sk-xxx ./petstore-mcp
+```
+
+The scaffold writes four files into `-out`:
+
+```
+gen/petstore-mcp/
+├── main.go               # entrypoint — stdio MCP transport, env-var auth.
+├── go.mod                # pins the generator runtime + chosen MCP SDK.
+├── README.md             # env-var table generated from securitySchemes.
+└── petstoremcp/
+    └── petstoremcp.mcp.go  # the generated MCP tool registration.
+```
+
+Switch SDK with `-sdk=mark3labs`; the generated `main.go` and `go.mod`
+adjust. Upstream base URL defaults to `servers[0].url` from the spec;
+override at runtime with `API_BASE_URL`.
+
+Auth shapes the generator wires automatically:
+
+| Spec | Env var(s) |
+|---|---|
+| `type: apiKey, in: header/query/cookie` | `API_KEY_<UPPER_SCHEME_NAME>` |
+| `type: http, scheme: bearer` | `BEARER_TOKEN_<UPPER_SCHEME_NAME>` |
+| `type: http, scheme: basic` | `BASIC_AUTH_USERNAME_<UPPER_SCHEME_NAME>` + `BASIC_AUTH_PASSWORD_<UPPER_SCHEME_NAME>` |
+| `type: oauth2` | `OAUTH2_ACCESS_TOKEN_<UPPER_SCHEME_NAME>` (used as Bearer; no token-exchange flow) |
+| `type: openIdConnect`, `type: http, scheme: digest` | unsupported — surfaced as `unsupported-security-scheme` warning, dropped from wiring |
+
+A missing required credential surfaces as an MCP tool-result error
+naming the env var the user should set — never a silent upstream 401.
+
+## Pattern 14 — Batch proxy for a monorepo of specs
+
+```bash
+openapi-gen-go-mcp \
+    -mode=proxy \
+    -spec apis/ \
+    -out gen \
+    -module github.com/acme/apis-mcp \
+    -force
+```
+
+Every spec under `apis/` becomes its own independent Go module under
+`gen/<slug>mcp/`, each with its own `go.mod`, its own `main.go`, and an
+import path of `github.com/acme/apis-mcp/<slug>`. Each module builds
+independently. Combine with `x-mcp: false` (Pattern 11) to curate which
+operations from each spec become tools.
+
 ## Choosing a pattern
 
 | If you want… | Use |
@@ -336,5 +403,7 @@ import path.
 | Aggregate several APIs behind one MCP endpoint | Pattern 10 |
 | Publish only a curated subset of a large spec | Pattern 11 |
 | Regenerate many specs in one CLI invocation | Pattern 12 |
+| Zero-boilerplate runnable MCP server from a spec | Pattern 13 |
+| Same, but for many specs at once | Pattern 14 |
 
 For the reasoning behind the architectural choices these patterns rely on, see [`design-decisions.md`](design-decisions.md).

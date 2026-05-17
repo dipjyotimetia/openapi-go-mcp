@@ -67,6 +67,12 @@ const (
 	// default); the warning lets the spec author notice and fix typos like
 	// `x-mcp: "yes"` or `x-mcp: 1`.
 	DiagInvalidXMCPValue = "invalid-x-mcp-value"
+	// DiagUnsupportedSecurityScheme is emitted (warning) when a security
+	// scheme cannot be lowered into one of the kinds proxy mode wires
+	// (apiKey-header/query/cookie, http-bearer, http-basic, oauth2-as-bearer).
+	// The scheme is dropped from auth generation; companion mode is
+	// unaffected because it never consumes the parsed schemes anyway.
+	DiagUnsupportedSecurityScheme = "unsupported-security-scheme"
 )
 
 // diagSink collects diagnostics during a single CollectOperations run. It

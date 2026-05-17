@@ -61,6 +61,9 @@ func run() int {
 		listOnly        = flag.Bool("list", false, "do not generate; list operations from the spec(s) and exit")
 		emitV3          = flag.String("emit-v3", "", "do not generate code; write the spec as OpenAPI 3.x YAML to this path (useful for feeding converted Swagger 2.0 to oapi-codegen). Rejected in batch mode.")
 		warningsAsError = flag.Bool("warnings-as-errors", false, "exit non-zero when any warning-level diagnostic fires")
+		mode            = flag.String("mode", "companion", "emission mode: \"companion\" (default — emit a *.mcp.go that delegates to a user-supplied oapi-codegen client) or \"proxy\" (emit a runnable Go module: *.mcp.go + main.go + go.mod + README, with env-var-driven auth derived from the spec's securitySchemes)")
+		modulePath      = flag.String("module", "", "Go module path written into the scaffold's go.mod; required when -mode=proxy, rejected otherwise. In batch mode treated as a base path; per-spec slug is appended.")
+		sdk             = flag.String("sdk", "gosdk", "MCP SDK adapter the proxy scaffold imports: \"gosdk\" (default, modelcontextprotocol/go-sdk) or \"mark3labs\" (mark3labs/mcp-go). Ignored in companion mode.")
 		showVersion     = flag.Bool("version", false, "print version information and exit")
 	)
 	flag.Parse()
@@ -72,6 +75,36 @@ func run() int {
 
 	if *specPath == "" {
 		fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: the -spec flag is required")
+		return exitUsage
+	}
+
+	// Validate -mode and its companions before any spec is loaded so
+	// flag-misuse errors surface fast.
+	var genMode generator.Mode
+	switch *mode {
+	case "companion":
+		genMode = generator.ModeCompanion
+	case "proxy":
+		genMode = generator.ModeProxy
+	default:
+		fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: -mode must be \"companion\" or \"proxy\"; got %q\n", *mode)
+		return exitUsage
+	}
+	if genMode == generator.ModeProxy {
+		if *modulePath == "" {
+			fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: -module is required when -mode=proxy (the Go import path written into the generated go.mod)")
+			return exitUsage
+		}
+		if *sdk != "gosdk" && *sdk != "mark3labs" {
+			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: -sdk must be \"gosdk\" or \"mark3labs\"; got %q\n", *sdk)
+			return exitUsage
+		}
+		if *emitV3 != "" {
+			fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: -emit-v3 cannot be combined with -mode=proxy (proxy emits Go, not YAML)")
+			return exitUsage
+		}
+	} else if *modulePath != "" {
+		fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: -module is only valid with -mode=proxy")
 		return exitUsage
 	}
 
@@ -96,6 +129,9 @@ func run() int {
 	}
 
 	baseOpts := generator.Options{
+		Mode:              genMode,
+		ModulePath:        *modulePath,
+		SDK:               *sdk,
 		OutDir:            *outDir,
 		PackageName:       *pkgName,
 		ClientImport:      *clientImport,
@@ -127,12 +163,13 @@ func run() int {
 
 	ctx := context.Background()
 
-	// Pre-flight: codegen invocations need -client-import to dispatch into
-	// an oapi-codegen package. -list and -emit-v3 don't, so the check is
-	// gated on the actual mode the CLI is in.
+	// Pre-flight: companion-mode codegen invocations need -client-import to
+	// dispatch into an oapi-codegen package. Proxy mode does its own HTTP
+	// so the flag is irrelevant; -list and -emit-v3 don't generate code at
+	// all. Gate the check on the actual mode the CLI is in.
 	codegenMode := !*listOnly && *emitV3 == ""
-	if codegenMode && *clientImport == "" {
-		fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: the -client-import flag is required (path to your oapi-codegen output package)")
+	if codegenMode && genMode == generator.ModeCompanion && *clientImport == "" {
+		fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: the -client-import flag is required in companion mode (path to your oapi-codegen output package)")
 		return exitUsage
 	}
 

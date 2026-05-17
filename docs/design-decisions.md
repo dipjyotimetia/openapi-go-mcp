@@ -167,6 +167,35 @@ The non-obvious choices made by `openapi-gen-go-mcp`, why they exist, and what t
 
 **Cost.** A failed spec leaves earlier specs' output on disk. Acceptable — matches today's "write as you go" semantics. The error report names every failing spec by path so the user can rerun selectively.
 
+## 13. Dual-mode (companion + proxy) rather than replacing one with the other
+
+**Decision.** Proxy mode (`-mode=proxy`) ships alongside companion mode. Companion mode stays the default; its output is byte-for-byte unchanged (golden test guards it).
+
+**Alternative considered.** Make proxy mode the default and demote companion to opt-in; or replace companion entirely.
+
+**Why both.**
+- **Enterprises embed companion mode.** Teams that wire the companion file into their own service binary (custom transport, mTLS, internal tracing, custom retry policies via their `oapi-codegen` client) would have to rewrite that integration if companion mode disappeared. The cost-to-value is bad.
+- **New users get the turnkey path.** Proxy mode is the harsha-iiiv-equivalent zero-config flow: one command, one binary, env-var auth from the spec. New adopters don't need to learn `oapi-codegen` to ship.
+- **Shared core, ~20% divergent surface.** Both modes share schema conversion, parameter decoding, response wrapping, MCP-library adapters, batch orchestration, and `x-mcp` filtering. Only request construction and the auth helpers differ. Maintaining two templates is cheap given the test coverage.
+
+**Cost.** Two codegen templates (`fileTemplate` + `fileTemplateProxy`), two assertions in the renderer, and a small `Options.Mode` branch. The CLI gets three new flags (`-mode`, `-module`, `-sdk`) but they're inert in the default path.
+
+## 14. Env-var-only auth, with conventions matched to harsha-iiiv
+
+**Decision.** Proxy mode authenticates from environment variables. No OAuth2 token-exchange flow, no `--auth-config` YAML, no JSON-mounted credentials. Variable names mirror the TypeScript prior art so users moving between ecosystems aren't surprised: `API_KEY_<NAME>`, `BEARER_TOKEN_<NAME>`, `BASIC_AUTH_USERNAME_<NAME>` + `BASIC_AUTH_PASSWORD_<NAME>`, `OAUTH2_ACCESS_TOKEN_<NAME>`.
+
+**Alternative considered.** Full OAuth2 client_credentials / authorization_code flows with a token-acquisition step at startup; or a config file mapping schemes to specific env vars.
+
+**Why env-only.**
+- **Single line of integration with secret stores.** Vault, AWS Secrets Manager, K8s Secrets, Doppler — all surface as env vars. Building a token-fetch loop inside the generated binary would duplicate machinery the deployment already has.
+- **Conventions over configuration.** A config file is one more thing to keep in sync with the spec. The env-var name is derived from the scheme key once; if you rename the scheme, you rename the var.
+- **OAuth2 → Bearer-from-env is honest.** Most OAuth2 deployments fetch a token via a sidecar (or the platform). The generator's job is to forward it, not re-implement RFC 6749.
+- **Matches the dominant TypeScript prior art.** Users moving from `harsha-iiiv/openapi-mcp-generator` see the same env-var shape and don't need to relearn anything.
+
+**When multiple security requirements apply.** OpenAPI's `security: [ { A }, { B } ]` means "A *or* B is sufficient". Proxy mode picks the first requirement whose schemes are all parseable; everything else is anonymous fallback. Spec authors who need true multi-scheme routing should compose schemes within one requirement (`{ A, B }` = both required), which proxy mode applies in alphabetical order. This trade-off is documented in `pkg/generator/security.go::ResolveOperationSecurity`.
+
+**Cost.** No support for token rotation without restart; no support for OIDC discovery, mTLS, AWS SigV4, or other transport-level auth. Users who need those plug in a custom `http.Client` via `runtime.WithHTTPClient` from a companion-mode integration — the escape hatch is intact.
+
 ## Non-goals
 
 These are deliberately out of scope:
