@@ -12,8 +12,9 @@ This document describes the structure of `openapi-gen-go-mcp` — its packages, 
 ## Package layout
 
 ```
-cmd/openapi-gen-go-mcp/   # CLI entry point
-pkg/loader/               # OpenAPI 3.x + Swagger 2.0 ingestion
+cmd/openapi-gen-go-mcp/   # CLI entry point + batch orchestration loop
+pkg/loader/               # OpenAPI 3.x + Swagger 2.0 ingestion; ExpandSpecArg
+pkg/batch/                # Per-spec option derivation, slug rules, collision detection
 pkg/generator/            # Operation collection, schema conversion, Go source emission
 pkg/runtime/              # MCP-library-agnostic types (MCPServer, Tool, helpers)
 pkg/runtime/gosdk/        # Adapter for modelcontextprotocol/go-sdk
@@ -24,37 +25,58 @@ testdata/                 # Spec fixtures + golden generator output
 
 ## Data flow
 
+The pipeline is conceptually single-spec — `loader.Load → CollectOperations →
+Render → write` — and that pipeline runs unchanged whether the user supplied
+one spec or one hundred. Multi-spec runs are an orchestration layer in front
+of it: `ExpandSpecArg` resolves the `-spec` argument into a list of
+`SpecRef`s, `batch.PlanFor` lifts each into a `(doc, generator.Options)`
+pair, and the CLI loops the single-spec pipeline once per pair.
+
 ```
-spec.{yaml,json}
+-spec value (file | URL | glob | directory | comma-list)
        │
        ▼
 ┌────────────────────────────────────┐
-│ loader.Load                        │   Reads file; detects Swagger 2.0 via
-│   ├ isSwagger2 → convertSwagger2   │   top-level "swagger: 2.0"; converts
-│   └ openapi3.NewLoader.LoadFromData│   via kin-openapi/openapi2conv when
-└────────────────────────────────────┘   needed.
+│ loader.ExpandSpecArg               │   Resolves -spec into []SpecRef:
+│   isHTTPURL → URL passthrough      │   URL passthrough, filepath.Glob for
+│   hasGlobMeta → filepath.Glob      │   *, ?, []; WalkDir for directories
+│   IsDir → expandDir (recursive)    │   (.yaml/.yml/.json only, dot-files
+│   else → single file               │   skipped, symlinks not followed).
+└────────────────────────────────────┘   Sorted + deduplicated.
        │
-       ▼  *openapi3.T (validated)
+       ▼  []SpecRef
 ┌────────────────────────────────────┐
-│ generator.CollectOperations        │   Walks paths × methods in sorted order.
-│   for each operation:              │   Per-operation SchemaConverter; shared
-│     conv := NewSchemaConverter…    │   nameByPtr lookup map built once.
-│     conv.Adopt(nameByPtr)          │
-│     buildOperation(...)            │
+│ batch.PlanFor (per ref)            │   Single-spec mode: Opts pass through
+│   slug = filename stem [a-z0-9]    │   verbatim so the existing -package /
+│   batch mode derives:              │   flat-output UX is intact. Batch mode
+│     PackageName = slug + "mcp"     │   derives PackageName, OutDir, and
+│     OutDir      = out/<slug>mcp    │   ClientImport from the slug.
+│     ClientImport= base/<slug>      │   batch.DetectCollisions then aborts
+│                                    │   before any write if two specs collide.
 └────────────────────────────────────┘
        │
-       ▼  []Operation (with input schemas pre-marshalled)
+       ▼  []SpecPlan
 ┌────────────────────────────────────┐
-│ generator.Render                   │   text/template → gofmt.
-│   templateFuncs() helpers:         │   Emits Register*Client function and
-│     callArgs, paramsTypeName, …    │   one `const input_<tool>` per operation.
-└────────────────────────────────────┘
-       │
-       ▼  []byte (gofmt-clean Go source)
-┌────────────────────────────────────┐
-│ os.WriteFile(<out>/<pkg>.mcp.go)   │
+│ For each plan (CLI orchestration): │   Per-plan errors are captured and
+│                                    │   reported at end; in batch mode the
+│   loader.Load(plan.Ref.Path)       │   loop keeps going so CI sees every
+│       │                            │   failing spec in one run. Exit code
+│       ▼  *openapi3.T (validated)   │   rolls up to exitGenerate (3) when
+│   generator.CollectOperations      │   any plan failed.
+│   generator.Render                 │
+│   os.WriteFile(plan.Opts.OutDir/   │
+│                plan.Opts.Pkg+.mcp.go)
 └────────────────────────────────────┘
 ```
+
+`loader.Load` reads each individual file or URL exactly as before — detects
+Swagger 2.0 via top-level `swagger: 2.0` and converts via
+`kin-openapi/openapi2conv` when needed. `generator.CollectOperations` walks
+paths × methods in sorted order, building a per-operation
+`SchemaConverter` (the shared `nameByPtr` lookup map is rebuilt per plan
+because each spec has its own component pool — there is no cross-spec
+sharing in v1). `generator.Render` emits `Register*Client` and one
+`const input_<tool>` per operation; the final byte stream is gofmt-clean.
 
 ## Runtime architecture (generated code → MCP server)
 

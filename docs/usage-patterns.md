@@ -206,6 +206,122 @@ raw.Run(ctx, &mcp.StdioTransport{})
 
 One binary, many upstream APIs, one MCP endpoint for the LLM.
 
+## Pattern 11 — Curating which operations become MCP tools
+
+Not every operation in a spec should be reachable from an LLM. Mark
+operations, path-items, or the whole document with an `x-mcp` extension to
+opt them in or out. Operation-level annotations beat path-level annotations
+beat document-level annotations beat the generator's CLI default.
+
+```yaml
+openapi: 3.0.0
+info: { title: BillingAPI, version: "1.0" }
+
+# Document-wide default for this spec: nothing becomes an MCP tool unless
+# explicitly opted in below. (Equivalent to passing -exclude-by-default at
+# the CLI, but kept in the spec so every consumer of the file behaves the
+# same way without remembering the flag.)
+x-mcp: false
+
+paths:
+  /invoices:
+    get:                       # opt-in this one operation
+      operationId: listInvoices
+      x-mcp: true
+      responses: { "200": { description: ok } }
+    post:                      # … but not this one
+      operationId: createInvoice
+      responses: { "200": { description: ok } }
+
+  /admin/refund:               # whole path-item opted out
+    x-mcp: false
+    post:
+      operationId: refund
+      responses: { "200": { description: ok } }
+```
+
+Run the generator with `-list` first to see which operations survive
+filtering; excluded operations show up as `excluded-by-x-mcp` info
+diagnostics on stderr, and unrecognised `x-mcp` values (typos like
+`x-mcp: yes`) become `invalid-x-mcp-value` warnings so they don't slip
+past review:
+
+```bash
+openapi-gen-go-mcp -spec billing.yaml -list
+openapi-gen-go-mcp -force -spec billing.yaml \
+    -out gen/billingmcp -package billingmcp \
+    -client-import github.com/acme/billing/gen/billing
+```
+
+`-force` is required to overwrite an existing `*.mcp.go`; the safety check
+catches accidental regenerations that would clobber hand-edited or already
+committed output.
+
+## Pattern 12 — Batch generation across many specs
+
+A monorepo with one spec per service (or a fan-out integration that touches
+every API at a partner) is the usual driver for this pattern. Point `-spec`
+at a directory, a glob, or a comma-separated list, and the CLI runs the
+single-spec pipeline once per matched file.
+
+```bash
+# Recursive directory: every .yaml/.yml/.json under apis/ becomes a tool set
+openapi-gen-go-mcp \
+    -spec apis/ \
+    -out gen \
+    -client-import github.com/acme/apis/gen \
+    -force
+
+# Glob with stdlib filepath.Glob syntax (no ** in v1; use a directory for recursion)
+openapi-gen-go-mcp \
+    -spec 'apis/*.yaml' \
+    -out gen \
+    -client-import github.com/acme/apis/gen
+
+# Multiple folders / mixed inputs, comma-separated. Each entry is expanded
+# independently then concatenated, sorted, and deduplicated.
+openapi-gen-go-mcp \
+    -spec 'core-apis/,partner-apis/,extras/audit.yaml' \
+    -out gen \
+    -client-import github.com/acme/apis/gen
+```
+
+For every matched spec the generator derives a slug from the filename stem
+(lowercase, alphanumeric only — e.g. `billing-api.yaml → billingapi`) and
+writes:
+
+| Derived field | Value |
+|---|---|
+| `PackageName` | `<slug>mcp` |
+| `OutDir`      | `<out>/<slug>mcp/` |
+| `ClientImport`| `<base>/<slug>` (Go forward-slash join) |
+
+So `-out gen -client-import github.com/acme/apis/gen` on `apis/billing.yaml`
+emits `gen/billingmcp/billingmcp.mcp.go` whose `import` line reads
+`"github.com/acme/apis/gen/billing"`. Pair each `<slug>mcp` directory with an
+`oapi-codegen` invocation that writes its typed client under the matching
+import path.
+
+**Behaviour notes:**
+
+- **Failures don't stop the run.** If one spec is malformed, the rest still
+  generate; every error is reported at end and the process exits with code
+  `3` so CI catches it.
+- **Slug collisions abort upfront.** Two specs that derive the same slug
+  (e.g. `v1/api.yaml` and `v2/api.yaml`) are reported by path before any
+  file is written — rename one to disambiguate.
+- **`-package` and `-emit-v3` are rejected** (`exitUsage`) in batch mode:
+  `-package` would force every output to share a name, and `-emit-v3`
+  writes one file.
+- **`-list` is supported.** With multiple matched specs, the output is
+  grouped under `=== <path> ===` headers per spec — handy for grepping a
+  monorepo before committing the regenerate.
+- **URLs stay single-spec.** A glob over `https://…` would be ambiguous;
+  passing one URL in `-spec` works exactly as today.
+- **Symlinks not followed.** `filepath.WalkDir` reports symlinks as files
+  (not directories), so a stray symlink can't escape the user's intended
+  tree.
+
 ## Choosing a pattern
 
 | If you want… | Use |
@@ -218,5 +334,7 @@ One binary, many upstream APIs, one MCP endpoint for the LLM.
 | Expose an internal service to an LLM | Pattern 8 |
 | Run a Swagger 2.0 spec | Pattern 9 |
 | Aggregate several APIs behind one MCP endpoint | Pattern 10 |
+| Publish only a curated subset of a large spec | Pattern 11 |
+| Regenerate many specs in one CLI invocation | Pattern 12 |
 
 For the reasoning behind the architectural choices these patterns rely on, see [`design-decisions.md`](design-decisions.md).

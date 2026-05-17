@@ -142,6 +142,31 @@ The non-obvious choices made by `openapi-gen-go-mcp`, why they exist, and what t
 
 **Cost.** Adding a new per-call context property requires editing the registration call, not a generic header arg. Acceptable — the alternative is a security hole.
 
+## 11. Auto-derived per-spec config in batch mode, not a config file
+
+**Decision.** When `-spec` matches more than one spec, the generator derives `PackageName`, `OutDir`, and `ClientImport` from each spec's filename stem (the *slug*: `billing-api.yaml → billingapi`). `PackageName=<slug>mcp`, `OutDir=<out>/<slug>mcp`, `ClientImport=<base>/<slug>`. No config file. No CLI map. The user supplies a single base `-client-import` and an `-out` directory; everything else is mechanical.
+
+**Alternative considered.** A YAML config file mapping each spec path to its package name and import path (the approach the TypeScript reference generator was originally going to take).
+
+**Why filename-derived.**
+- **Convention beats configuration.** A monorepo with one spec per service already encodes "what this thing is" in the filename. Re-encoding it in a config is duplicate state that drifts.
+- **Trivially scriptable.** `openapi-gen-go-mcp -spec apis/ -out gen -client-import …` is one command. Adding a config file means another file the user has to maintain and another path the build has to source.
+- **Collisions surface loudly.** Two specs that derive the same slug (`v1/api.yaml`, `v2/api.yaml`) are caught up front by `batch.DetectCollisions` and reported with all source paths. The user fixes the filename, not a config table.
+
+**Cost.** Specs with non-alphanumeric filenames need to be renamed to a `[a-z0-9]` form. `Slug` errors fast when the stem sanitises to empty — no silent degradation.
+
+## 12. Batch-mode failures continue rather than fail-fast
+
+**Decision.** In multi-spec mode, a per-spec load or generate failure is captured and the loop keeps going. All errors are printed at the end; exit code rolls up to `exitGenerate` (`3`).
+
+**Alternative considered.** Fail fast on the first failure, matching today's single-spec behaviour.
+
+**Why continue.**
+- **CI gets a complete picture in one run.** Twenty specs and three of them broken: one run produces three error reports, not three pull requests.
+- **Matches the structured-diagnostic philosophy.** The generator already accumulates per-operation diagnostics across a single spec; doing the same across multiple specs is the natural extension.
+
+**Cost.** A failed spec leaves earlier specs' output on disk. Acceptable — matches today's "write as you go" semantics. The error report names every failing spec by path so the user can rerun selectively.
+
 ## Non-goals
 
 These are deliberately out of scope:

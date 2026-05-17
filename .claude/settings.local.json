@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(git diff *)",
+      "Bash(cp pkg/loader/expand.go /tmp/batch-expand.go)",
+      "Bash(cp pkg/loader/expand_test.go /tmp/batch-expand_test.go)",
+      "Bash(cp pkg/batch/batch.go /tmp/batch-batch.go)",
+      "Bash(cp pkg/batch/batch_test.go /tmp/batch-batch_test.go)",
+      "Bash(golangci-lint run *)",
+      "Bash(go doc *)"
+    ]
+  }
+}

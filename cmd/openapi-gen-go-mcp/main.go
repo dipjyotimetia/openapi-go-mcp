@@ -17,6 +17,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/batch"
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/generator"
 	"github.com/dipjyotimetia/openapi-gen-go-mcp/pkg/loader"
 )
@@ -46,16 +47,18 @@ func main() {
 
 func run() int {
 	var (
-		specPath        = flag.String("spec", "", "path or http(s):// URL of OpenAPI 3.x or Swagger 2.0 spec (required)")
-		outDir          = flag.String("out", "./mcp", "output directory")
-		pkgName         = flag.String("package", "", "Go package name (defaults to <title>mcp)")
-		clientImport    = flag.String("client-import", "", "Go import path of oapi-codegen output (required)")
+		specPath        = flag.String("spec", "", "path, http(s):// URL, glob pattern, or directory of OpenAPI 3.x / Swagger 2.0 specs. Comma-separated entries are allowed for batch generation across multiple folders. (required)")
+		outDir          = flag.String("out", "./mcp", "output directory; in batch mode each spec gets its own subdirectory under this path")
+		pkgName         = flag.String("package", "", "Go package name (defaults to <title>mcp); rejected in batch mode where each spec auto-derives its own package name")
+		clientImport    = flag.String("client-import", "", "Go import path of oapi-codegen output (required for codegen); in batch mode treated as a base path and the per-spec slug is appended")
 		clientType      = flag.String("client-type", "ClientWithResponsesInterface", "client interface name from the oapi-codegen package")
 		namePrefix      = flag.String("name-prefix", "", "static prefix added to every tool name")
 		openAICompat    = flag.Bool("openai-compat", false, "emit OpenAI-tool-compatible JSON Schema")
 		preferCT        = flag.String("prefer-content-type", "", "request content type to pick when an operation declares multiple (overrides the JSON → form → multipart → octet → text → xml priority)")
-		listOnly        = flag.Bool("list", false, "do not generate; list operations from the spec and exit")
-		emitV3          = flag.String("emit-v3", "", "do not generate code; write the spec as OpenAPI 3.x YAML to this path (useful for feeding converted Swagger 2.0 to oapi-codegen)")
+		excludeDefault  = flag.Bool("exclude-by-default", false, "invert x-mcp filtering: when set, only operations explicitly opted in with `x-mcp: true` are generated; the default (false) generates every operation unless explicitly opted out with `x-mcp: false`")
+		force           = flag.Bool("force", false, "overwrite the generated *.mcp.go file if it already exists; without this, an existing file is a fatal error")
+		listOnly        = flag.Bool("list", false, "do not generate; list operations from the spec(s) and exit")
+		emitV3          = flag.String("emit-v3", "", "do not generate code; write the spec as OpenAPI 3.x YAML to this path (useful for feeding converted Swagger 2.0 to oapi-codegen). Rejected in batch mode.")
 		warningsAsError = flag.Bool("warnings-as-errors", false, "exit non-zero when any warning-level diagnostic fires")
 		showVersion     = flag.Bool("version", false, "print version information and exit")
 	)
@@ -71,32 +74,27 @@ func run() int {
 		return exitUsage
 	}
 
-	ctx := context.Background()
-	doc, err := loader.Load(ctx, *specPath)
+	refs, err := loader.ExpandSpecArg(*specPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: load: %v\n", err)
+		fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: %v\n", err)
 		return exitBadInput
 	}
+	isBatch := len(refs) > 1
 
-	if *listOnly {
-		generator.ListOperations(os.Stdout, doc)
-		return exitOK
-	}
-
-	if *emitV3 != "" {
-		if err := loader.WriteV3YAMLJSONOnly(doc, *emitV3); err != nil {
-			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: emit-v3: %v\n", err)
-			return exitGenerate
+	// Reject flag combinations that only make sense in single-spec mode.
+	// Done up front so we don't load any specs only to abort.
+	if isBatch {
+		if *pkgName != "" {
+			fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: -package cannot be combined with multi-spec input (each spec auto-derives its package name from its filename)")
+			return exitUsage
 		}
-		return exitOK
+		if *emitV3 != "" {
+			fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: -emit-v3 cannot be combined with multi-spec input (it writes a single file)")
+			return exitUsage
+		}
 	}
 
-	if *clientImport == "" {
-		fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: the -client-import flag is required (path to your oapi-codegen output package)")
-		return exitUsage
-	}
-
-	opts := generator.Options{
+	baseOpts := generator.Options{
 		OutDir:            *outDir,
 		PackageName:       *pkgName,
 		ClientImport:      *clientImport,
@@ -104,29 +102,104 @@ func run() int {
 		NamePrefix:        *namePrefix,
 		OpenAICompat:      *openAICompat,
 		PreferContentType: *preferCT,
+		ExcludeByDefault:  *excludeDefault,
+		Force:             *force,
 	}
-	diags, err := generator.Generate(doc, opts)
-	if err != nil {
-		printDiagnostics(diags)
-		fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: generate: %v\n", err)
-		return exitGenerate
+
+	// Build per-spec plans. Collisions are reported before any file is
+	// written so the user fixes them in one pass.
+	plans := make([]batch.SpecPlan, 0, len(refs))
+	for _, ref := range refs {
+		plan, planErr := batch.PlanFor(ref, baseOpts, isBatch)
+		if planErr != nil {
+			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: %v\n", planErr)
+			return exitBadInput
+		}
+		plans = append(plans, plan)
 	}
-	printDiagnostics(diags)
-	if *warningsAsError && countWarnings(diags) > 0 {
-		return exitWarningsError
+	if isBatch {
+		if collErr := batch.DetectCollisions(plans); collErr != nil {
+			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: %v\n", collErr)
+			return exitBadInput
+		}
 	}
-	return exitOK
+
+	ctx := context.Background()
+
+	// Pre-flight: codegen invocations need -client-import to dispatch into
+	// an oapi-codegen package. -list and -emit-v3 don't, so the check is
+	// gated on the actual mode the CLI is in.
+	codegenMode := !*listOnly && *emitV3 == ""
+	if codegenMode && *clientImport == "" {
+		fmt.Fprintln(os.Stderr, "openapi-gen-go-mcp: the -client-import flag is required (path to your oapi-codegen output package)")
+		return exitUsage
+	}
+
+	// Orchestrate. Errors are accumulated so a single bad spec doesn't
+	// stop the rest of the batch — CI gets a complete picture in one run.
+	exitCode := exitOK
+	for _, plan := range plans {
+		prefix := plan.Ref.Path
+		doc, loadErr := loader.Load(ctx, plan.Ref.Path)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp [%s]: load: %v\n", prefix, loadErr)
+			if !isBatch {
+				return exitBadInput
+			}
+			exitCode = exitGenerate // batch partial failure rolls up to "generate failure"
+			continue
+		}
+
+		if *listOnly {
+			if isBatch {
+				_, _ = fmt.Fprintf(os.Stdout, "=== %s ===\n", prefix)
+			}
+			generator.ListOperations(os.Stdout, doc)
+			continue
+		}
+
+		if *emitV3 != "" {
+			// Reached only in single-spec mode (batch rejects -emit-v3 above).
+			if emitErr := loader.WriteV3YAMLJSONOnly(doc, *emitV3); emitErr != nil {
+				fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: emit-v3: %v\n", emitErr)
+				return exitGenerate
+			}
+			return exitOK
+		}
+
+		diags, genErr := generator.Generate(doc, plan.Opts)
+		if genErr != nil {
+			printDiagnostics(diags, prefix, isBatch)
+			fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp [%s]: generate: %v\n", prefix, genErr)
+			if !isBatch {
+				return exitGenerate
+			}
+			exitCode = exitGenerate
+			continue
+		}
+		printDiagnostics(diags, prefix, isBatch)
+		if *warningsAsError && countWarnings(diags) > 0 && exitCode == exitOK {
+			exitCode = exitWarningsError
+		}
+	}
+	return exitCode
 }
 
 // printDiagnostics renders structured generator findings to stderr in a
-// stable shape (severity-grouped, sorted) so CI logs are diffable. The
-// generator also writes a free-form line per diagnostic to opts.Warnings
-// (os.Stderr by default); both are kept for backwards compatibility.
-func printDiagnostics(diags []generator.Diagnostic) {
+// stable shape (severity-grouped, sorted) so CI logs are diffable. In
+// batch mode each finding is prefixed with its spec source so users can
+// trace a diagnostic back to the file that produced it. The generator
+// also writes a free-form line per diagnostic to opts.Warnings (os.Stderr
+// by default); both are kept for backwards compatibility.
+func printDiagnostics(diags []generator.Diagnostic, prefix string, isBatch bool) {
 	if len(diags) == 0 {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "openapi-gen-go-mcp: %d diagnostic(s):\n", len(diags))
+	header := "openapi-gen-go-mcp"
+	if isBatch {
+		header = fmt.Sprintf("openapi-gen-go-mcp [%s]", prefix)
+	}
+	fmt.Fprintf(os.Stderr, "%s: %d diagnostic(s):\n", header, len(diags))
 	for _, d := range diags {
 		fmt.Fprintf(os.Stderr, "  [%s] %s %s: %s\n", d.Severity, d.Code, d.Path, d.Message)
 	}

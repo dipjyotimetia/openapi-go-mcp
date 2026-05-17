@@ -44,6 +44,20 @@ type Options struct {
 	// Operations that don't declare the preferred type fall back to the
 	// default priority.
 	PreferContentType string
+	// ExcludeByDefault inverts the x-mcp fallback. When false (the zero value
+	// and the recommended default), every operation becomes an MCP tool
+	// unless explicitly opted out with `x-mcp: false` at the operation,
+	// path-item, or document level. When true, only operations explicitly
+	// opted in with `x-mcp: true` (at any level) are generated — useful for
+	// large specs where the spec author wants to publish a small curated
+	// subset as MCP tools without rewriting the rest of the document.
+	ExcludeByDefault bool
+	// Force, when true, lets Generate overwrite an existing output file
+	// without complaint. When false (the default), Generate returns an
+	// error if <OutDir>/<PackageName>.mcp.go already exists, so re-running
+	// the tool against a directory that contains hand-edited output is a
+	// loud failure rather than a silent overwrite.
+	Force bool
 	// Warnings receives non-fatal generator messages (e.g. spec/handler
 	// conflicts). When nil, warnings are written to os.Stderr.
 	Warnings io.Writer
@@ -106,6 +120,12 @@ func (opts *Options) normalize(doc *openapi3.T) error {
 	return nil
 }
 
+// MCPPackageSuffix is the conventional suffix appended to every generated
+// Go package name (e.g. spec title "Petstore" → package "petstoremcp").
+// Exported so pkg/batch can derive its per-spec package names without
+// duplicating the convention.
+const MCPPackageSuffix = "mcp"
+
 func derivePackageName(doc *openapi3.T) string {
 	title := "api"
 	if doc.Info != nil && doc.Info.Title != "" {
@@ -120,6 +140,6 @@ func derivePackageName(doc *openapi3.T) string {
 	if b.Len() == 0 {
 		b.WriteString("api")
 	}
-	b.WriteString("mcp")
+	b.WriteString(MCPPackageSuffix)
 	return b.String()
 }

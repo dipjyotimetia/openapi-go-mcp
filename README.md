@@ -16,6 +16,8 @@ Generate a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) serve
 - **MCP-library-agnostic** — runtime targets a thin `MCPServer` interface; ship adapters for the official [`modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk) and [`mark3labs/mcp-go`](https://github.com/mark3labs/mcp-go). Switch backends by changing one import.
 - **Tool-call schema built from the spec** — path / query / header / body grouped into a single JSON Schema with `$defs` for shared components; recursion-safe.
 - **OpenAI compatibility mode** — `-openai-compat` flag emits a flattened, `$ref`-free schema suitable for OpenAI's strict tool-call schema validator.
+- **Multi-spec batch generation** — `-spec` accepts a directory (recursive walk), glob pattern, or comma-separated list of any of those. Each matched spec is rendered into its own `<slug>mcp/` subdirectory under `-out`, with `PackageName` and `ClientImport` auto-derived from the filename stem.
+- **Curated exposure with `x-mcp`** — spec authors can opt operations, path-items, or the whole document in or out of MCP tool generation; pair with `-exclude-by-default` for opt-in-only specs.
 - **Runtime options** — `WithNamePrefix` (namespace tools when the same API is registered multiple times), `WithExtraProperties` (inject per-call context such as base URL or auth token).
 
 ## Install
@@ -89,17 +91,99 @@ func main() {
 ```
 openapi-gen-go-mcp [flags]
 
-  -spec PATH              OpenAPI 3.x or Swagger 2.0 file (required)
-  -out DIR                output directory (default ./mcp)
-  -package NAME           Go package name (default derived from spec title)
-  -client-import PATH     import path of the oapi-codegen output package (required, except with -list / -emit-v3)
+  -spec PATH              OpenAPI 3.x / Swagger 2.0 source. Accepts:
+                            • a single file path
+                            • an http(s):// URL
+                            • a directory (recursively walked, .yaml/.yml/.json)
+                            • a glob pattern (filepath.Glob: *, ?, [...])
+                            • a comma-separated list of any of the above
+                          When the value matches multiple specs, batch mode
+                          is activated: each spec gets its own <slug>mcp/
+                          subdirectory under -out. (required)
+  -out DIR                output directory (default ./mcp). In batch mode this
+                          is the base directory; each spec lands in <out>/<slug>mcp/
+  -package NAME           Go package name (default derived from spec title).
+                          Rejected in batch mode — packages are auto-derived
+                          from filename stems instead.
+  -client-import PATH     import path of the oapi-codegen output package
+                          (required, except with -list / -emit-v3). In batch
+                          mode this is treated as a base path and the slug
+                          is appended (forward-slash join).
   -client-type NAME       client interface name (default ClientWithResponsesInterface)
   -name-prefix PREFIX     static prefix added to every tool name
   -openai-compat          emit OpenAI-tool-compatible JSON Schema
+  -prefer-content-type CT pick this content type for the request body when an
+                          operation declares multiple (overrides the default
+                          JSON → form → multipart → octet → text → xml priority)
+  -exclude-by-default     invert x-mcp filtering: only operations explicitly
+                          opted in with `x-mcp: true` are generated (default
+                          is to generate every operation unless excluded with
+                          `x-mcp: false`)
+  -force                  overwrite the generated *.mcp.go file if it exists;
+                          without this, an existing file is a fatal error
   -list                   print the operations found in the spec and exit
   -emit-v3 PATH           write the spec as OpenAPI 3 YAML to PATH (Swagger 2.0 conversion helper)
+  -warnings-as-errors     exit non-zero when any warning-level diagnostic fires
   -version                print version information and exit
 ```
+
+### Filtering operations with `x-mcp`
+
+Tag any operation, path-item, or the document root with `x-mcp: false` to keep
+it out of the generated tool list; `x-mcp: true` opts it back in. The most
+specific level wins (operation > path > document > CLI default). Excluded
+operations show up as info diagnostics; typos like `x-mcp: maybe` become
+warnings so they don't slip past review.
+
+```yaml
+paths:
+  /admin:
+    x-mcp: false             # exclude every operation under /admin …
+    delete:
+      operationId: purgeAll
+    get:
+      operationId: listAdmins
+      x-mcp: true            # … except this one
+```
+
+Pair with `-exclude-by-default` when only a small curated subset of a large
+spec should be exposed: nothing is generated unless `x-mcp: true` appears
+explicitly.
+
+### Generating from many specs in one invocation
+
+Point `-spec` at a directory, glob, or comma-separated list — every match is
+rendered into its own subdirectory under `-out`:
+
+```bash
+# Recursive directory: every spec under apis/ becomes its own tool set
+openapi-gen-go-mcp \
+    -spec apis/ \
+    -out gen \
+    -client-import github.com/acme/apis/gen \
+    -force
+
+# Glob (filepath.Glob syntax — no ** in v1; use a directory for recursion)
+openapi-gen-go-mcp -spec 'apis/*.yaml' -out gen -client-import github.com/acme/apis/gen
+
+# Multiple folders / mixed inputs, comma-separated
+openapi-gen-go-mcp -spec 'core/,extras/audit.yaml' -out gen -client-import example.com/g
+```
+
+For each matched spec the generator derives a slug from the filename stem
+(`billing-api.yaml → billingapi`) and writes
+`<out>/<slug>mcp/<slug>mcp.mcp.go`. The `-client-import` value is treated as
+a base path; the slug is appended with forward slashes, so
+`github.com/acme/apis/gen` on `billing.yaml` becomes
+`github.com/acme/apis/gen/billing` in the generated import line.
+
+Failures don't stop the run: each spec is processed independently, every
+error is reported at end, and the process exits with code `3` if any spec
+failed. Slug collisions (e.g. `v1/api.yaml` and `v2/api.yaml` both → `api`)
+are caught up front before any file is written.
+
+See [`docs/usage-patterns.md`](docs/usage-patterns.md) Pattern 12 for the
+full walkthrough.
 
 ## Swagger 2.0 workflow
 

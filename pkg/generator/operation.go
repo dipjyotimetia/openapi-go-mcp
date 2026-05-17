@@ -179,6 +179,7 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 	}
 	sort.Strings(pathKeys)
 
+	defaultInclude := !opts.ExcludeByDefault
 	for _, path := range pathKeys {
 		item := paths[path]
 		opByMethod := item.Operations()
@@ -188,9 +189,14 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 		}
 		sort.Strings(methods)
 		for _, method := range methods {
+			specOp := opByMethod[method]
+			opPath := fmt.Sprintf("%s %s", method, path)
+			if !resolveXMCPInclusion(doc.Extensions, item.Extensions, specOp.Extensions, defaultInclude, opPath, sink) {
+				continue
+			}
 			conv := NewSchemaConverter(opts.OpenAICompat)
 			conv.Adopt(nameByPtr)
-			op, err := buildOperation(item, opByMethod[method], method, path, conv, opts, sink)
+			op, err := buildOperation(item, specOp, method, path, conv, opts, sink)
 			if err != nil {
 				return nil, sink.finalize(), fmt.Errorf("%s %s: %w", method, path, err)
 			}
@@ -198,6 +204,33 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 		}
 	}
 	return ops, sink.finalize(), nil
+}
+
+// resolveXMCPInclusion is the CollectOperations adapter around
+// includeOperation: it converts the (value, level, recognised) tuple into
+// an include/skip decision and routes informative diagnostics through the
+// sink so spec authors see exactly which level drove the choice. Returns
+// true when the operation should be generated.
+func resolveXMCPInclusion(rootExts, pathExts, opExts map[string]any, defaultInclude bool, opPath string, sink *diagSink) bool {
+	include, level, ok := includeOperation(rootExts, pathExts, opExts, defaultInclude)
+	if !ok {
+		// Unrecognised x-mcp value at `level`; surface the typo and fall
+		// through to the document-wide default the user intended.
+		sink.warn(DiagInvalidXMCPValue, opPath,
+			fmt.Sprintf("x-mcp extension at %s level is not a boolean; falling back to the document default (%v)", level, defaultInclude))
+		return defaultInclude
+	}
+	if !include {
+		// Info, not warning: x-mcp:false is the spec author asking us to
+		// skip this operation — exactly the documented behaviour.
+		reason := "default"
+		if level != xmcpLevelDefault {
+			reason = fmt.Sprintf("x-mcp:false at %s level", level)
+		}
+		sink.info(DiagExcludedByXMCP, opPath, fmt.Sprintf("operation excluded from MCP tool generation (%s)", reason))
+		return false
+	}
+	return true
 }
 
 // emitSpecDiagnostics records spec-wide findings that don't belong to a

@@ -38,6 +38,18 @@ func generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
 		return diags, fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
 	}
 	outPath := filepath.Join(opts.OutDir, opts.PackageName+".mcp.go")
+	info, statErr := os.Stat(outPath)
+	switch {
+	case statErr == nil && info.IsDir():
+		// A directory at the output path is rejected even with -force.
+		// Removing it would be far more destructive than overwriting a
+		// file, and the user almost certainly did not intend it.
+		return diags, fmt.Errorf("output path %s exists and is a directory", outPath)
+	case statErr == nil && !opts.Force:
+		return diags, fmt.Errorf("output file %s already exists; pass -force to overwrite", outPath)
+	case statErr != nil && !os.IsNotExist(statErr):
+		return diags, fmt.Errorf("stat %s: %w", outPath, statErr)
+	}
 	if err := os.WriteFile(outPath, src, 0o644); err != nil {
 		return diags, fmt.Errorf("write %s: %w", outPath, err)
 	}

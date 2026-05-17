@@ -56,6 +56,17 @@ const (
 	DiagMissingPathParam           = "missing-path-param"
 	DiagNestedMultipartEncoding    = "nested-multipart-encoding"
 	DiagContentTypeHeaderOverride  = "content-type-header-override"
+	// DiagExcludedByXMCP is emitted (info) when an operation is skipped due
+	// to an `x-mcp: false` extension at the operation, path-item, or
+	// document level. The Path field carries "<METHOD> <path>", the Message
+	// names the level that drove the decision.
+	DiagExcludedByXMCP = "excluded-by-x-mcp"
+	// DiagInvalidXMCPValue is emitted (warning) when an `x-mcp` extension
+	// value is neither a boolean nor a "true"/"false" string. The decision
+	// falls through to the next precedence level (or the document-wide
+	// default); the warning lets the spec author notice and fix typos like
+	// `x-mcp: "yes"` or `x-mcp: 1`.
+	DiagInvalidXMCPValue = "invalid-x-mcp-value"
 )
 
 // diagSink collects diagnostics during a single CollectOperations run. It
