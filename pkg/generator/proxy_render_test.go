@@ -246,3 +246,55 @@ paths:
 		t.Errorf("expected empty-string spec default for no-servers spec\n--src--\n%s", prefix(got, 1500))
 	}
 }
+
+func TestRender_ProxyMode_AppliesRuntimeOptions(t *testing.T) {
+	spec := []byte(`openapi: 3.0.0
+info: { title: RuntimeOpts, version: "1.0" }
+servers:
+  - url: https://{host}/v1
+    variables:
+      host:
+        default: api.example.com
+paths:
+  /things/{thingId}:
+    get:
+      operationId: getThing
+      parameters:
+        - in: path
+          name: thingId
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: ok }
+`)
+	tmp := filepath.Join(t.TempDir(), "spec.yaml")
+	if err := os.WriteFile(tmp, spec, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := loader.Load(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, err := Render(doc, Options{
+		Mode:        ModeProxy,
+		PackageName: "runtimeoptsmcp",
+		ModulePath:  "example.com/runtimeopts",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	src := string(got)
+	for _, want := range []string{
+		"runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)",
+		"context.WithTimeout(ctx, cfg.RequestTimeout)",
+		"runtime.SubstituteServerVariables(baseURL, cfg.ServerVariables)",
+		"runtime.PathEscape(v)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("proxy output missing %q\n--src--\n%s", want, prefix(got, 2400))
+		}
+	}
+	if strings.Contains(src, "runtime.QueryEscape(v)") {
+		t.Errorf("proxy path params must not use query escaping")
+	}
+}

@@ -80,6 +80,47 @@ func TestRender_CallArgsErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestRender_DeduplicatesPathParamGoVars(t *testing.T) {
+	spec := []byte(`openapi: 3.0.0
+info: { title: PathVars, version: "1" }
+paths:
+  /things/{foo-bar}/{foo_bar}:
+    get:
+      operationId: getThing
+      parameters:
+        - in: path
+          name: foo-bar
+          required: true
+          schema: { type: string }
+        - in: path
+          name: foo_bar
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: ok }
+`)
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromData(spec)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := doc.Validate(context.Background()); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	src, err := Render(doc, Options{
+		ClientImport: "example.com/foo/client",
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Count(string(src), "var foo_bar string") != 1 {
+		t.Errorf("expected one unsuffixed foo_bar variable; got\n%s", src)
+	}
+	if !strings.Contains(string(src), "var foo_bar_2 string") {
+		t.Errorf("expected suffixed path variable for colliding param; got\n%s", src)
+	}
+}
+
 // minimalDoc builds an in-memory OpenAPI doc with one trivial operation so
 // Render has something to walk. Used by the alias-validation tests where
 // the spec content is irrelevant — the alias check fires before operation

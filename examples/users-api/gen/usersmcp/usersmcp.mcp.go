@@ -38,6 +38,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_getHealth),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			resp, err := c.GetHealthWithResponse(ctx)
 			if err != nil {
 				return runtime.HandleError(err)
@@ -62,6 +68,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_listUsers),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var params users.ListUsersParams
 			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
 				return runtime.HandleError(err)
@@ -90,6 +102,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_deleteUser),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var userId openapi_types.UUID
 			if err := runtime.DecodePathParam(req.Arguments, "userId", &userId); err != nil {
 				return runtime.HandleError(err)
@@ -118,6 +136,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_getUser),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var userId openapi_types.UUID
 			if err := runtime.DecodePathParam(req.Arguments, "userId", &userId); err != nil {
 				return runtime.HandleError(err)
@@ -146,6 +170,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_patchUser),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var userId openapi_types.UUID
 			if err := runtime.DecodePathParam(req.Arguments, "userId", &userId); err != nil {
 				return runtime.HandleError(err)
@@ -178,6 +208,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_replaceUser),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var userId openapi_types.UUID
 			if err := runtime.DecodePathParam(req.Arguments, "userId", &userId); err != nil {
 				return runtime.HandleError(err)
@@ -214,6 +250,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_getUserPost),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var userId openapi_types.UUID
 			if err := runtime.DecodePathParam(req.Arguments, "userId", &userId); err != nil {
 				return runtime.HandleError(err)

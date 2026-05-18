@@ -37,6 +37,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_uploadAvatar),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/image", ContentType: "image/png"}})
 			if err != nil {
 				return runtime.HandleError(err)
@@ -65,6 +71,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_uploadBlob),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			body, err := runtime.BuildBase64BytesBody(req.Arguments)
 			if err != nil {
 				return runtime.HandleError(err)
@@ -93,6 +105,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_downloadBlob),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var id string
 			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
 				return runtime.HandleError(err)
@@ -121,6 +139,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_uploadFile),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/attachment"}})
 			if err != nil {
 				return runtime.HandleError(err)
@@ -149,6 +173,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_submitLogin),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var body nonjson.SubmitLoginFormdataRequestBody
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
@@ -177,6 +207,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_postNote),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			body, err := runtime.BuildStringBody(req.Arguments)
 			if err != nil {
 				return runtime.HandleError(err)
@@ -205,6 +241,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_createProfile),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			contentType, body, err := runtime.BuildMultipartBody(req.Arguments, []runtime.RequestFilePart{{Path: "/user/avatar"}})
 			if err != nil {
 				return runtime.HandleError(err)
@@ -233,6 +275,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_getLatestReport),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			resp, err := c.GetLatestReportWithResponse(ctx)
 			if err != nil {
 				return runtime.HandleError(err)
@@ -257,6 +305,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			RawInputSchema: json.RawMessage(input_importXML),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			body, err := runtime.BuildStringBody(req.Arguments)
 			if err != nil {
 				return runtime.HandleError(err)

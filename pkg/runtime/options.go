@@ -11,6 +11,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -199,14 +200,38 @@ func AddExtraPropertiesToTool(tool Tool, properties []ExtraProperty) Tool {
 // (removing it so generated body/path decoders don't see it). Returns the
 // string value and a bool indicating whether the property was present.
 func ExtractExtraProperty(args map[string]any, name string) (string, bool) {
-	v, ok := args[name]
+	v, ok := ExtractExtraPropertyValue(args, name)
 	if !ok {
 		return "", false
 	}
-	delete(args, name)
 	s, ok := v.(string)
 	if !ok {
 		return "", false
 	}
 	return s, true
+}
+
+// ExtractExtraPropertyValue pulls the raw value of an extra property out of
+// args, removing it so generated body/path decoders don't see it.
+func ExtractExtraPropertyValue(args map[string]any, name string) (any, bool) {
+	v, ok := args[name]
+	if !ok {
+		return nil, false
+	}
+	delete(args, name)
+	return v, true
+}
+
+// ApplyExtraPropertiesToContext removes configured extra properties from args
+// and stores present values on ctx under their ContextKey. Properties without
+// a ContextKey are still removed so they don't leak into generated decoders.
+func ApplyExtraPropertiesToContext(ctx context.Context, args map[string]any, properties []ExtraProperty) context.Context {
+	for _, p := range properties {
+		v, ok := ExtractExtraPropertyValue(args, p.Name)
+		if !ok || p.ContextKey == nil {
+			continue
+		}
+		ctx = context.WithValue(ctx, p.ContextKey, v)
+	}
+	return ctx
 }

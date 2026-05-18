@@ -37,6 +37,12 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 			RawInputSchema: json.RawMessage(input_findPets),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var params pet.FindPetsParams
 			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
 				return runtime.HandleError(err)
@@ -65,6 +71,12 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 			RawInputSchema: json.RawMessage(input_addPet),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var body pet.AddPetJSONRequestBody
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
@@ -93,6 +105,12 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 			RawInputSchema: json.RawMessage(input_deletePet),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var id int64
 			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
 				return runtime.HandleError(err)
@@ -121,6 +139,12 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 			RawInputSchema: json.RawMessage(input_findPetByID),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var id int64
 			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
 				return runtime.HandleError(err)

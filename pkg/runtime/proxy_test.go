@@ -142,8 +142,17 @@ func TestBuildProxyURL_MergesIntoExistingQueryOnBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "tenant=acme") || !strings.Contains(got, "status=available") {
-		t.Errorf("must preserve base query AND add new params; got %q", got)
+	want := "https://api.example.com/v2/pets?status=available&tenant=acme"
+	if got != want {
+		t.Errorf("BuildProxyURL = %q, want %q", got, want)
+	}
+}
+
+func TestPathEscape_UsesPathSegmentEscaping(t *testing.T) {
+	got := PathEscape("a b/c")
+	want := "a%20b%2Fc"
+	if got != want {
+		t.Errorf("PathEscape = %q, want %q", got, want)
 	}
 }
 

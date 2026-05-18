@@ -9,6 +9,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -116,5 +117,34 @@ func TestWithHTTPClient_AndTimeout_AndServerVars(t *testing.T) {
 	}
 	if cfg.ServerVariables["host"] != "api.example.com" || cfg.ServerVariables["version"] != "v2" {
 		t.Errorf("ServerVariables merged incorrectly: %v", cfg.ServerVariables)
+	}
+}
+
+func TestApplyExtraPropertiesToContext_RemovesArgsAndStoresValues(t *testing.T) {
+	type ctxKey string
+	tenantKey := ctxKey("tenant")
+	limitKey := ctxKey("limit")
+	args := map[string]any{
+		"tenant": "acme",
+		"limit":  float64(10),
+	}
+
+	ctx := ApplyExtraPropertiesToContext(context.Background(), args, []ExtraProperty{
+		{Name: "tenant", ContextKey: tenantKey},
+		{Name: "limit", ContextKey: limitKey},
+		{Name: "missing", ContextKey: ctxKey("missing")},
+	})
+
+	if got := ctx.Value(tenantKey); got != "acme" {
+		t.Errorf("tenant context value = %#v, want acme", got)
+	}
+	if got := ctx.Value(limitKey); got != float64(10) {
+		t.Errorf("limit context value = %#v, want 10", got)
+	}
+	if _, ok := args["tenant"]; ok {
+		t.Errorf("tenant arg was not removed: %+v", args)
+	}
+	if _, ok := args["limit"]; ok {
+		t.Errorf("limit arg was not removed: %+v", args)
 	}
 }

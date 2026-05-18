@@ -73,3 +73,25 @@ func TestRender_NoCookiesNoCookieEditor(t *testing.T) {
 		t.Errorf("petstore has no cookies; cookieEditor must not be emitted")
 	}
 }
+
+func TestRender_CompanionMode_AppliesRuntimeOptions(t *testing.T) {
+	doc, err := loader.Load(context.Background(), "../../testdata/petstore-v3.yaml")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	src, err := Render(doc, Options{
+		ClientImport: "example.com/pet/gen/pet",
+		Warnings:     io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, want := range []string{
+		"runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)",
+		"context.WithTimeout(ctx, cfg.RequestTimeout)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("companion output missing %q", want)
+		}
+	}
+}

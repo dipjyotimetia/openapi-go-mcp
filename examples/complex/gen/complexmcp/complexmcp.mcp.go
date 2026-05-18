@@ -38,6 +38,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			RawInputSchema: json.RawMessage(input_submitEvent),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var body complex.SubmitEventJSONRequestBody
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
@@ -66,6 +72,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			RawInputSchema: json.RawMessage(input_getItem),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var itemId openapi_types.UUID
 			if err := runtime.DecodePathParam(req.Arguments, "itemId", &itemId); err != nil {
 				return runtime.HandleError(err)
@@ -98,6 +110,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			RawInputSchema: json.RawMessage(input_createProfile),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var body complex.CreateProfileJSONRequestBody
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
@@ -126,6 +144,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			RawInputSchema: json.RawMessage(input_createThread),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var body complex.CreateThreadJSONRequestBody
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)

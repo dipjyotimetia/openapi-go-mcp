@@ -37,6 +37,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_listTodos),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var params todos.ListTodosParams
 			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
 				return runtime.HandleError(err)
@@ -65,6 +71,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_createTodo),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var body todos.CreateTodoJSONRequestBody
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
@@ -93,6 +105,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_deleteTodo),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var id int64
 			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
 				return runtime.HandleError(err)
@@ -121,6 +139,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_getTodo),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var id int64
 			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
 				return runtime.HandleError(err)
@@ -149,6 +173,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			RawInputSchema: json.RawMessage(input_updateTodo),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var id int64
 			if err := runtime.DecodePathParam(req.Arguments, "id", &id); err != nil {
 				return runtime.HandleError(err)

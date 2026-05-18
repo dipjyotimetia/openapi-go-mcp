@@ -65,6 +65,12 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			{{- range .PathParams}}
 			var {{.GoVar}} {{.GoType}}
 			if err := runtime.DecodePathParam(req.Arguments, "{{.Name}}", &{{.GoVar}}); err != nil {
@@ -212,6 +218,12 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			pathStr := {{quote .Path}}
 			{{- range .PathParams}}
 			{
@@ -219,7 +231,7 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 				if err != nil {
 					return runtime.HandleError(err)
 				}
-				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", runtime.QueryEscape(v))
+				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", runtime.PathEscape(v))
 			}
 			{{- end}}
 
@@ -236,7 +248,11 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 			}
 			{{- end}}
 
-			u, err := runtime.BuildProxyURL(baseURL, pathStr, q)
+			resolvedBaseURL, err := runtime.SubstituteServerVariables(baseURL, cfg.ServerVariables)
+			if err != nil {
+				return runtime.HandleError(err)
+			}
+			u, err := runtime.BuildProxyURL(resolvedBaseURL, pathStr, q)
 			if err != nil {
 				return runtime.HandleError(err)
 			}

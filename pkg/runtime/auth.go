@@ -116,3 +116,8 @@ func AppendQuery(req *http.Request, name, value string) {
 // surface means the runtime alone defines correctness — a future RFC
 // quirk gets fixed here, not in every generated file.
 func QueryEscape(s string) string { return url.QueryEscape(s) }
+
+// PathEscape is re-exported for generated proxy path parameters. It uses
+// path-segment escaping, not query escaping, so spaces become %20 rather
+// than '+' and slashes stay encoded as data.
+func PathEscape(s string) string { return url.PathEscape(s) }

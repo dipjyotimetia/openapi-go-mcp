@@ -318,6 +318,7 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 
 	mergedParams := mergeParametersWithShadowWarning(item.Parameters, op.Parameters, opPath, sink)
 	paramByIn := groupParameters(mergedParams)
+	pathGoVar := newGoVarUniquer()
 
 	for _, m := range pathParamRe.FindAllStringSubmatch(path, -1) {
 		name := m[1]
@@ -329,7 +330,9 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 			sink.warn(DiagMissingPathParam, opPath,
 				fmt.Sprintf("path parameter %q is referenced in the URL but has no parameter definition; treating as a required string", name))
 		}
-		out.PathParams = append(out.PathParams, paramFieldFromSpec(name, p, true))
+		f := paramFieldFromSpec(name, p, true)
+		f.GoVar = pathGoVar(f.GoVar)
+		out.PathParams = append(out.PathParams, f)
 		if p != nil {
 			emitParameterStyleDiagnostic(p, opPath, sink)
 		}
@@ -922,6 +925,20 @@ func goSafeIdent(s string) string {
 		id += "_"
 	}
 	return id
+}
+
+func newGoVarUniquer() func(string) string {
+	seen := map[string]int{}
+	return func(base string) string {
+		if base == "" {
+			base = "_"
+		}
+		seen[base]++
+		if seen[base] == 1 {
+			return base
+		}
+		return fmt.Sprintf("%s_%d", base, seen[base])
+	}
 }
 
 // oapiTypesImport is the import path of the oapi-codegen helper types package.

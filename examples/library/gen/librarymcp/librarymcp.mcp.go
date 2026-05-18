@@ -37,6 +37,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			RawInputSchema: json.RawMessage(input_getAuthor),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var authorId int64
 			if err := runtime.DecodePathParam(req.Arguments, "authorId", &authorId); err != nil {
 				return runtime.HandleError(err)
@@ -65,6 +71,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			RawInputSchema: json.RawMessage(input_listBooks),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var params library.ListBooksParams
 			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
 				return runtime.HandleError(err)
@@ -93,6 +105,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			RawInputSchema: json.RawMessage(input_createBook),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var params library.CreateBookParams
 			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
 				return runtime.HandleError(err)
@@ -125,6 +143,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			RawInputSchema: json.RawMessage(input_deleteBook),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var bookId int64
 			if err := runtime.DecodePathParam(req.Arguments, "bookId", &bookId); err != nil {
 				return runtime.HandleError(err)
@@ -153,6 +177,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			RawInputSchema: json.RawMessage(input_getBook),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
 			var bookId int64
 			if err := runtime.DecodePathParam(req.Arguments, "bookId", &bookId); err != nil {
 				return runtime.HandleError(err)

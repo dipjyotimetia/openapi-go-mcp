@@ -134,20 +134,26 @@ func BuildProxyURL(baseURL, opPath string, query url.Values) (string, error) {
 	if baseURL == "" {
 		return "", fmt.Errorf("base URL is empty (set API_BASE_URL or configure servers[] in the spec)")
 	}
-	base := strings.TrimRight(baseURL, "/")
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse base URL %q: %w", baseURL, err)
+	}
+	basePath := strings.TrimRight(u.Path, "/")
 	op := opPath
 	if op != "" && !strings.HasPrefix(op, "/") {
 		op = "/" + op
 	}
-	u := base + op
-	if len(query) == 0 {
-		return u, nil
+	u.Path = basePath + op
+	if len(query) > 0 {
+		q := u.Query()
+		for key, values := range query {
+			for _, value := range values {
+				q.Add(key, value)
+			}
+		}
+		u.RawQuery = q.Encode()
 	}
-	if strings.Contains(u, "?") {
-		// Server URL already contains a query string (rare but valid).
-		return u + "&" + query.Encode(), nil
-	}
-	return u + "?" + query.Encode(), nil
+	return u.String(), nil
 }
 
 // EncodeJSONBody marshals body into a bytes.Buffer suitable for use as an
