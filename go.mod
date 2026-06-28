@@ -4,9 +4,9 @@ go 1.26
 
 require (
 	github.com/getkin/kin-openapi v0.140.0
-	github.com/mark3labs/mcp-go v0.55.0
+	github.com/mark3labs/mcp-go v0.55.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/oapi-codegen/runtime v1.4.1
+	github.com/oapi-codegen/runtime v1.4.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
