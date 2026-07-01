@@ -95,6 +95,23 @@ func TestParseSecuritySchemes_APIKey_HeaderQueryCookie(t *testing.T) {
 	}
 }
 
+func TestParseSecuritySchemes_XquikAPIKeyHeader(t *testing.T) {
+	doc := docWithSchemes(openapi3.SecuritySchemes{
+		"apiKey": schemeRef(&openapi3.SecurityScheme{Type: "apiKey", In: "header", Name: "x-api-key"}),
+	})
+
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parsed apiKey scheme, got %d: %+v", len(got), got)
+	}
+
+	scheme := got[0]
+	if scheme.Name != "apiKey" || scheme.Kind != SecurityAPIKey || scheme.In != "header" ||
+		scheme.ParamName != "x-api-key" || scheme.EnvVar != "API_KEY_APIKEY" {
+		t.Errorf("xquik api key scheme: %+v", scheme)
+	}
+}
+
 func TestParseSecuritySchemes_HTTPBearerAndBasic(t *testing.T) {
 	doc := docWithSchemes(openapi3.SecuritySchemes{
 		"bearerAuth": schemeRef(&openapi3.SecurityScheme{Type: "http", Scheme: "bearer"}),
