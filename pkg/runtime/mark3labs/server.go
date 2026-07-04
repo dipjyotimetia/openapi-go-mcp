@@ -44,6 +44,22 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 		RawInputSchema:  tool.RawInputSchema,
 		RawOutputSchema: tool.RawOutputSchema,
 	}
+	if a := tool.Annotations; a != nil {
+		ann := mcp.ToolAnnotation{
+			Title:           a.Title,
+			DestructiveHint: a.DestructiveHint,
+			OpenWorldHint:   a.OpenWorldHint,
+		}
+		// mark3labs models every hint as *bool; the protocol default for
+		// these two is false, so only an explicit true needs a pointer.
+		if a.ReadOnlyHint {
+			ann.ReadOnlyHint = runtime.BoolPtr(true)
+		}
+		if a.IdempotentHint {
+			ann.IdempotentHint = runtime.BoolPtr(true)
+		}
+		mcpTool.Annotations = ann
+	}
 	a.s.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// mark3labs deserialises Arguments to map[string]any when the wire
 		// shape allows; route through runtime.DecodeArguments so malformed

@@ -32,9 +32,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /avatars
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "uploadAvatar",
-			Description:    "Upload an avatar image with an encoding contentType override.",
-			RawInputSchema: json.RawMessage(input_uploadAvatar),
+			Name:            "uploadAvatar",
+			Description:     "Upload an avatar image with an encoding contentType override.",
+			RawInputSchema:  json.RawMessage(input_uploadAvatar),
+			RawOutputSchema: json.RawMessage(output_uploadAvatar),
+			Annotations:     &runtime.ToolAnnotations{Title: "Upload an avatar image with an encoding contentType override."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -69,6 +71,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			Name:           "uploadBlob",
 			Description:    "Upload a raw binary blob.",
 			RawInputSchema: json.RawMessage(input_uploadBlob),
+			Annotations:    &runtime.ToolAnnotations{Title: "Upload a raw binary blob."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -103,6 +106,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			Name:           "downloadBlob",
 			Description:    "Download a previously-uploaded blob.",
 			RawInputSchema: json.RawMessage(input_downloadBlob),
+			Annotations:    &runtime.ToolAnnotations{Title: "Download a previously-uploaded blob.", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -134,9 +138,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /files/upload
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "uploadFile",
-			Description:    "Upload a file with metadata via multipart form-data.",
-			RawInputSchema: json.RawMessage(input_uploadFile),
+			Name:            "uploadFile",
+			Description:     "Upload a file with metadata via multipart form-data.",
+			RawInputSchema:  json.RawMessage(input_uploadFile),
+			RawOutputSchema: json.RawMessage(output_uploadFile),
+			Annotations:     &runtime.ToolAnnotations{Title: "Upload a file with metadata via multipart form-data."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -168,9 +174,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /forms/login
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "submitLogin",
-			Description:    "Submit a form-urlencoded login.",
-			RawInputSchema: json.RawMessage(input_submitLogin),
+			Name:            "submitLogin",
+			Description:     "Submit a form-urlencoded login.",
+			RawInputSchema:  json.RawMessage(input_submitLogin),
+			RawOutputSchema: json.RawMessage(output_submitLogin),
+			Annotations:     &runtime.ToolAnnotations{Title: "Submit a form-urlencoded login."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -205,6 +213,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			Name:           "postNote",
 			Description:    "Post a plain-text note.",
 			RawInputSchema: json.RawMessage(input_postNote),
+			Annotations:    &runtime.ToolAnnotations{Title: "Post a plain-text note."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -239,6 +248,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			Name:           "createProfile",
 			Description:    "Create a profile whose avatar is a nested binary field.",
 			RawInputSchema: json.RawMessage(input_createProfile),
+			Annotations:    &runtime.ToolAnnotations{Title: "Create a profile whose avatar is a nested binary field."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -273,6 +283,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			Name:           "getLatestReport",
 			Description:    "Retrieve the most recent plain-text report.",
 			RawInputSchema: json.RawMessage(input_getLatestReport),
+			Annotations:    &runtime.ToolAnnotations{Title: "Retrieve the most recent plain-text report.", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -303,6 +314,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			Name:           "importXML",
 			Description:    "Import an XML document.",
 			RawInputSchema: json.RawMessage(input_importXML),
+			Annotations:    &runtime.ToolAnnotations{Title: "Import an XML document."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -369,6 +381,16 @@ const input_uploadAvatar = `{
   "type": "object"
 }`
 
+const output_uploadAvatar = `{
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "type": "object"
+}`
+
 const input_uploadBlob = `{
   "properties": {
     "body": {
@@ -428,6 +450,16 @@ const input_uploadFile = `{
   "type": "object"
 }`
 
+const output_uploadFile = `{
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "type": "object"
+}`
+
 const input_submitLogin = `{
   "properties": {
     "body": {
@@ -452,6 +484,16 @@ const input_submitLogin = `{
   "required": [
     "body"
   ],
+  "type": "object"
+}`
+
+const output_submitLogin = `{
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "properties": {
+    "session_token": {
+      "type": "string"
+    }
+  },
   "type": "object"
 }`
 

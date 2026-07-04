@@ -33,9 +33,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /health
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getHealth",
-			Description:    "Health check (no params)",
-			RawInputSchema: json.RawMessage(input_getHealth),
+			Name:            "getHealth",
+			Description:     "Health check (no params)",
+			RawInputSchema:  json.RawMessage(input_getHealth),
+			RawOutputSchema: json.RawMessage(output_getHealth),
+			Annotations:     &runtime.ToolAnnotations{Title: "Health check (no params)", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -66,6 +68,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			Name:           "listUsers",
 			Description:    "List users",
 			RawInputSchema: json.RawMessage(input_listUsers),
+			Annotations:    &runtime.ToolAnnotations{Title: "List users", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -100,6 +103,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			Name:           "deleteUser",
 			Description:    "Delete user",
 			RawInputSchema: json.RawMessage(input_deleteUser),
+			Annotations:    &runtime.ToolAnnotations{Title: "Delete user", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -131,9 +135,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getUser",
-			Description:    "Get user",
-			RawInputSchema: json.RawMessage(input_getUser),
+			Name:            "getUser",
+			Description:     "Get user",
+			RawInputSchema:  json.RawMessage(input_getUser),
+			RawOutputSchema: json.RawMessage(output_getUser),
+			Annotations:     &runtime.ToolAnnotations{Title: "Get user", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -165,9 +171,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// PATCH /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "patchUser",
-			Description:    "Partial update",
-			RawInputSchema: json.RawMessage(input_patchUser),
+			Name:            "patchUser",
+			Description:     "Partial update",
+			RawInputSchema:  json.RawMessage(input_patchUser),
+			RawOutputSchema: json.RawMessage(output_patchUser),
+			Annotations:     &runtime.ToolAnnotations{Title: "Partial update"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -203,9 +211,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// PUT /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "replaceUser",
-			Description:    "Replace user",
-			RawInputSchema: json.RawMessage(input_replaceUser),
+			Name:            "replaceUser",
+			Description:     "Replace user",
+			RawInputSchema:  json.RawMessage(input_replaceUser),
+			RawOutputSchema: json.RawMessage(output_replaceUser),
+			Annotations:     &runtime.ToolAnnotations{Title: "Replace user", IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -245,9 +255,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /users/{userId}/posts/{postId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getUserPost",
-			Description:    "Get post for user",
-			RawInputSchema: json.RawMessage(input_getUserPost),
+			Name:            "getUserPost",
+			Description:     "Get post for user",
+			RawInputSchema:  json.RawMessage(input_getUserPost),
+			RawOutputSchema: json.RawMessage(output_getUserPost),
+			Annotations:     &runtime.ToolAnnotations{Title: "Get post for user", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -295,6 +307,16 @@ func headerOf(r *http.Response) http.Header {
 
 const input_getHealth = `{
   "properties": {},
+  "type": "object"
+}`
+
+const output_getHealth = `{
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "properties": {
+    "status": {
+      "type": "string"
+    }
+  },
   "type": "object"
 }`
 
@@ -373,6 +395,50 @@ const input_getUser = `{
   "type": "object"
 }`
 
+const output_getUser = `{
+  "$defs": {
+    "User": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "email": {
+          "format": "email",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "admin",
+            "member",
+            "guest"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "email"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/User"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_patchUser = `{
   "$defs": {
     "UserPatch": {
@@ -417,6 +483,50 @@ const input_patchUser = `{
     "path",
     "body"
   ],
+  "type": "object"
+}`
+
+const output_patchUser = `{
+  "$defs": {
+    "User": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "email": {
+          "format": "email",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "admin",
+            "member",
+            "guest"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "email"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/User"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`
 
@@ -479,6 +589,50 @@ const input_replaceUser = `{
   "type": "object"
 }`
 
+const output_replaceUser = `{
+  "$defs": {
+    "User": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "email": {
+          "format": "email",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "admin",
+            "member",
+            "guest"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "email"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/User"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_getUserPost = `{
   "properties": {
     "path": {
@@ -502,5 +656,71 @@ const input_getUserPost = `{
   "required": [
     "path"
   ],
+  "type": "object"
+}`
+
+const output_getUserPost = `{
+  "$defs": {
+    "Post": {
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/User"
+        },
+        "body": {
+          "type": "string"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    },
+    "User": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "email": {
+          "format": "email",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "admin",
+            "member",
+            "guest"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "email"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Post"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`

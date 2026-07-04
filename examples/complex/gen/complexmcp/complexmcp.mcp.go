@@ -36,6 +36,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			Name:           "submitEvent",
 			Description:    "Submit an event (oneOf polymorphism)",
 			RawInputSchema: json.RawMessage(input_submitEvent),
+			Annotations:    &runtime.ToolAnnotations{Title: "Submit an event (oneOf polymorphism)"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -67,9 +68,11 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// GET /items/{itemId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getItem",
-			Description:    "Get an item with enum-typed query filter",
-			RawInputSchema: json.RawMessage(input_getItem),
+			Name:            "getItem",
+			Description:     "Get an item with enum-typed query filter",
+			RawInputSchema:  json.RawMessage(input_getItem),
+			RawOutputSchema: json.RawMessage(output_getItem),
+			Annotations:     &runtime.ToolAnnotations{Title: "Get an item with enum-typed query filter", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -105,9 +108,11 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// POST /profiles
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "createProfile",
-			Description:    "Create a profile (allOf composition)",
-			RawInputSchema: json.RawMessage(input_createProfile),
+			Name:            "createProfile",
+			Description:     "Create a profile (allOf composition)",
+			RawInputSchema:  json.RawMessage(input_createProfile),
+			RawOutputSchema: json.RawMessage(output_createProfile),
+			Annotations:     &runtime.ToolAnnotations{Title: "Create a profile (allOf composition)"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -139,9 +144,11 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// POST /threads
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "createThread",
-			Description:    "Create a thread (recursive Comment tree)",
-			RawInputSchema: json.RawMessage(input_createThread),
+			Name:            "createThread",
+			Description:     "Create a thread (recursive Comment tree)",
+			RawInputSchema:  json.RawMessage(input_createThread),
+			RawOutputSchema: json.RawMessage(output_createThread),
+			Annotations:     &runtime.ToolAnnotations{Title: "Create a thread (recursive Comment tree)"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -288,6 +295,52 @@ const input_getItem = `{
   "type": "object"
 }`
 
+const output_getItem = `{
+  "$defs": {
+    "Item": {
+      "properties": {
+        "deletedAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "archived",
+            "deleted"
+          ],
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Item"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_createProfile = `{
   "$defs": {
     "BaseProfile": {
@@ -337,6 +390,53 @@ const input_createProfile = `{
   "type": "object"
 }`
 
+const output_createProfile = `{
+  "$defs": {
+    "BaseProfile": {
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ExtendedProfile": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseProfile"
+        },
+        {
+          "properties": {
+            "bio": {
+              "type": "string"
+            },
+            "email": {
+              "format": "email",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/ExtendedProfile"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_createThread = `{
   "$defs": {
     "Comment": {
@@ -374,5 +474,43 @@ const input_createThread = `{
   "required": [
     "body"
   ],
+  "type": "object"
+}`
+
+const output_createThread = `{
+  "$defs": {
+    "Comment": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/Comment"
+          },
+          "type": "array"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Comment"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`

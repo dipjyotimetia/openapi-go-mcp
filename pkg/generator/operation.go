@@ -83,8 +83,15 @@ type Operation struct {
 	CallMethod string
 	// Description is the operation's summary/description, used as the tool description.
 	Description string
-	// Method/Path are the HTTP verb and templated path; retained for comments
-	// and debug output.
+	// Summary is the operation's raw summary line, surfaced as the tool
+	// annotation Title (human-readable display name).
+	Summary string
+	// Deprecated mirrors the operation's `deprecated: true` flag. Surfaced as
+	// a "Deprecated." prefix on Description because MCP has no native flag.
+	Deprecated bool
+	// Method/Path are the HTTP verb and templated path; the method also
+	// drives the tool annotation hints (GET/HEAD → read-only, DELETE →
+	// destructive, GET/HEAD/PUT/DELETE → idempotent).
 	Method string
 	Path   string
 	// PathParams are the path-template parameters, in declaration order.
@@ -129,6 +136,13 @@ type Operation struct {
 	ResponseContentType string
 	// InputSchemaJSON is the encoded JSON Schema for the tool's input.
 	InputSchemaJSON string
+	// OutputSchemaJSON is the encoded JSON Schema for the tool's output,
+	// lowered from the operation's selected 2xx JSON response schema. Empty
+	// when the response is not JSON or its root is not an object (MCP output
+	// schemas must be objects). Note the schema describes the success payload
+	// only — error results (IsError=true) carry the runtime's
+	// {"status","headers","body"} envelope instead.
+	OutputSchemaJSON string
 	// Security lists the security schemes the proxy template should
 	// apply to this operation. Populated only in ModeProxy; companion
 	// mode leaves the slice nil. Empty + Anonymous=true means "no auth";
@@ -150,6 +164,13 @@ type ParamField struct {
 	GoTypeImport string // import path required for GoType (empty for builtins)
 	Required     bool
 	Schema       *openapi3.SchemaRef // original parameter schema, used to build the input schema
+	// Description/Example/Deprecated carry Parameter-object-level metadata
+	// (as opposed to metadata on the parameter's schema). Merged into the
+	// tool input schema when the schema itself doesn't already declare the
+	// corresponding keyword.
+	Description string
+	Example     any
+	Deprecated  bool
 }
 
 // CollectOperations walks the spec and returns the Operations to generate, in
@@ -169,17 +190,18 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 	}
 	sink := newDiagSink(warnings)
 
+	// Spec-wide diagnostics: webhooks/server variables/security requirements
+	// at the document level. Emitted before the Paths nil-check so a
+	// webhooks-only 3.1 document still surfaces its findings. Proxy mode
+	// consumes the security requirement directly (env-var-driven auth), so we
+	// skip the informational "supply credentials manually" diagnostic in that
+	// mode — leaving it in would mislead users into thinking they still need
+	// to wire auth themselves.
+	emitSpecDiagnostics(doc, sink, opts.Mode)
+
 	if doc.Paths == nil {
 		return ops, sink.finalize(), nil
 	}
-
-	// Spec-wide diagnostics: callbacks/webhooks/security requirements at
-	// the document level. Proxy mode consumes the security requirement
-	// directly (env-var-driven auth), so we skip the informational
-	// "supply credentials manually" diagnostic in that mode — leaving it
-	// in would mislead users into thinking they still need to wire auth
-	// themselves.
-	emitSpecDiagnostics(doc, sink, opts.Mode)
 
 	// Proxy mode reads the spec's securitySchemes and wires auth into the
 	// generated code. Companion mode emits an info diagnostic instead
@@ -269,6 +291,11 @@ func resolveXMCPInclusion(rootExts, pathExts, opExts map[string]any, defaultIncl
 // from securitySchemes automatically, so the advisory would mislead users
 // into doing redundant work.
 func emitSpecDiagnostics(doc *openapi3.T, sink *diagSink, mode Mode) {
+	if len(doc.Webhooks) > 0 {
+		names := slices.Sorted(maps.Keys(doc.Webhooks))
+		sink.warn(DiagDroppedWebhook, "#/webhooks",
+			"webhooks describe requests the API makes to consumers and are not modelled as MCP tools; dropped: "+strings.Join(names, ", "))
+	}
 	for i, server := range doc.Servers {
 		if len(server.Variables) > 0 {
 			sink.info(DiagDroppedServerVariables,
@@ -311,6 +338,8 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		GoName:      goName,
 		CallMethod:  goName,
 		Description: chooseDescription(op),
+		Summary:     op.Summary,
+		Deprecated:  op.Deprecated,
 		Method:      method,
 		Path:        path,
 	}
@@ -392,9 +421,30 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		}
 	}
 
-	out.ResponseKind, out.ResponseContentType = pickResponseContent(op.Responses)
+	var respSchema *openapi3.SchemaRef
+	var respCode string
+	out.ResponseKind, out.ResponseContentType, respSchema, respCode = pickResponseContent(op.Responses)
+	emitDroppedLinkDiagnostic(op.Responses, opPath, sink)
 
-	schema, fileFields, err := buildInputSchema(out, conv)
+	// Lower the response schema into the tool's output schema — but only when
+	// it plausibly describes the success payload: an explicit 2xx response, or
+	// a "default" response on an operation that declares no 2xx at all. A
+	// "default" next to a contentless 2xx (the classic 204 + default-error
+	// pattern) is the error branch and must not be advertised as the output.
+	if out.ResponseKind == BodyJSON &&
+		(respCode != "default" || !hasDeclared2xxResponse(op.Responses)) {
+		// A separate converter keeps the output schema's $defs independent of
+		// the input schema's — each is a self-contained JSON Schema document.
+		outConv := NewSchemaConverter(conv.OpenAICompat)
+		outConv.Adopt(conv.NameByPtr())
+		outputSchema, err := buildOutputSchema(respSchema, outConv)
+		if err != nil {
+			return out, err
+		}
+		out.OutputSchemaJSON = outputSchema
+	}
+
+	schema, fileFields, err := buildInputSchema(out, conv, opPath, sink)
 	if err != nil {
 		return out, err
 	}
@@ -412,14 +462,17 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 // Within the chosen response, the same priority order pickRequestContent
 // uses applies (JSON → form → multipart → octet → text → xml → other), so
 // JSON responses keep their dedicated wrapper and the rest dispatch to
-// text/binary wrappers downstream.
-func pickResponseContent(responses *openapi3.Responses) (BodyKind, string) {
+// text/binary wrappers downstream. The chosen media type's schema and the
+// status code it came from are returned so the caller can lower the schema
+// into the tool's output schema (schema is nil when the media type declares
+// none; code is "" when nothing matched).
+func pickResponseContent(responses *openapi3.Responses) (BodyKind, string, *openapi3.SchemaRef, string) {
 	if responses == nil {
-		return BodyNone, ""
+		return BodyNone, "", nil, ""
 	}
 	respMap := responses.Map()
 	if len(respMap) == 0 {
-		return BodyNone, ""
+		return BodyNone, "", nil, ""
 	}
 	// Sort status codes; pick the smallest 2xx first, then "default".
 	codes := make([]string, 0, len(respMap))
@@ -443,12 +496,137 @@ func pickResponseContent(responses *openapi3.Responses) (BodyKind, string) {
 		if ref == nil || ref.Value == nil || len(ref.Value.Content) == 0 {
 			continue
 		}
-		kind, ct, _ := pickRequestContent(ref.Value.Content, "")
+		kind, ct, schema := pickRequestContent(ref.Value.Content, "")
 		if kind != BodyNone {
-			return kind, ct
+			return kind, ct, schema, code
 		}
 	}
-	return BodyNone, ""
+	return BodyNone, "", nil, ""
+}
+
+// isObjectSchemaRef reports whether the schema describes a JSON object: an
+// explicit single `type: object`, object-implying keywords (properties /
+// additionalProperties), or an allOf composition with at least one object
+// branch. seen guards against reference cycles. A schema with any explicit
+// non-object type (including nullable unions like ["object","null"]) is not
+// treated as a plain object — MCP SDKs require an unambiguous object root.
+func isObjectSchemaRef(ref *openapi3.SchemaRef, seen map[*openapi3.Schema]bool) bool {
+	if ref == nil || ref.Value == nil {
+		return false
+	}
+	s := ref.Value
+	if seen[s] {
+		return false
+	}
+	seen[s] = true
+	if types := normaliseTypes(s.Type); len(types) > 0 {
+		return len(types) == 1 && types[0] == "object" && !s.Nullable
+	}
+	if len(s.Properties) > 0 || s.AdditionalProperties.Has != nil || s.AdditionalProperties.Schema != nil {
+		return !s.Nullable
+	}
+	for _, branch := range s.AllOf {
+		if isObjectSchemaRef(branch, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasDeclared2xxResponse reports whether the operation declares any explicit
+// 2xx response (with or without content). Used to decide whether a "default"
+// response describes the success shape (no 2xx declared → default is all the
+// spec tells us) or the error branch (a 2xx exists → default is the usual
+// catch-all error response and must not become the tool's output schema).
+func hasDeclared2xxResponse(responses *openapi3.Responses) bool {
+	if responses == nil {
+		return false
+	}
+	for code := range responses.Map() {
+		if len(code) == 3 && code[0] == '2' {
+			return true
+		}
+	}
+	return false
+}
+
+// buildOutputSchema lowers the selected 2xx JSON response schema into the
+// tool's MCP output schema. Returns "" (no output schema) when the response
+// declares no schema or when its root is not a JSON object — both MCP SDKs
+// require output schemas to have root type "object", and array/scalar
+// responses have no faithful object representation.
+//
+// The emitted schema describes the success payload only. Error results
+// (IsError=true) carry the runtime's {"status","headers","body"} envelope in
+// StructuredContent, and empty 2xx bodies (e.g. 204) carry none — a note in
+// the schema description tells schema-aware clients what to expect.
+func buildOutputSchema(ref *openapi3.SchemaRef, conv *SchemaConverter) (string, error) {
+	if ref == nil || ref.Value == nil {
+		return "", nil
+	}
+	if !isObjectSchemaRef(ref, map[*openapi3.Schema]bool{}) {
+		return "", nil
+	}
+	root := conv.Convert(ref)
+	defs := conv.Defs()
+	if ptr, ok := root["$ref"].(string); ok {
+		// Convert hoisted the named component into $defs and returned a bare
+		// $ref root. MCP SDKs require the root to declare type "object", so
+		// re-anchor the reference under allOf.
+		root = map[string]any{
+			"type":  "object",
+			"allOf": []any{map[string]any{"$ref": ptr}},
+		}
+	} else if t, _ := root["type"].(string); t != "object" {
+		if _, has := root["type"]; has {
+			// A type array like ["object","null"] fails the go-sdk's strict
+			// root check; skip rather than silently tighten the contract.
+			return "", nil
+		}
+		// Inline allOf-composed root with no explicit type — object-ness was
+		// established above, and MCP SDKs require it declared.
+		root["type"] = "object"
+	}
+	const successNote = "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content."
+	if existing, ok := root["description"].(string); ok && existing != "" {
+		root["description"] = existing + "\n\n" + successNote
+	} else {
+		root["description"] = successNote
+	}
+	if len(defs) > 0 {
+		root["$defs"] = defs
+	}
+	buf, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal output schema: %w", err)
+	}
+	return string(buf), nil
+}
+
+// emitDroppedLinkDiagnostic surfaces OpenAPI response `links` objects, which
+// describe operation-to-operation relationships MCP tools have no channel
+// for. The tool itself is generated normally; only the link metadata is
+// dropped, and this diagnostic makes that drop visible. One diagnostic per
+// operation, naming every "<status>.<linkName>" pair in sorted order.
+func emitDroppedLinkDiagnostic(responses *openapi3.Responses, opPath string, sink *diagSink) {
+	if responses == nil || sink == nil {
+		return
+	}
+	var dropped []string
+	respMap := responses.Map()
+	for _, code := range slices.Sorted(maps.Keys(respMap)) {
+		ref := respMap[code]
+		if ref == nil || ref.Value == nil || len(ref.Value.Links) == 0 {
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(ref.Value.Links)) {
+			dropped = append(dropped, code+"."+name)
+		}
+	}
+	if len(dropped) > 0 {
+		sink.warn(DiagDroppedLink, opPath,
+			"response links are not modelled by MCP tools; dropped: "+strings.Join(dropped, ", "))
+	}
 }
 
 func groupParameters(params openapi3.Parameters) map[string]map[string]*openapi3.Parameter {
@@ -575,6 +753,9 @@ func paramFieldFromSpec(name string, p *openapi3.Parameter, required bool) Param
 	if p != nil {
 		f.GoType, f.GoTypeImport = goTypeForSchema(p.Schema)
 		f.Schema = p.Schema
+		f.Description = p.Description
+		f.Example = p.Example
+		f.Deprecated = p.Deprecated
 	}
 	return f
 }
@@ -683,7 +864,7 @@ func schemaOf(mt *openapi3.MediaType) *openapi3.SchemaRef {
 // the runtime must base64-decode at request time (nil for non-multipart
 // kinds). Typed kinds (JSON/Form/Multipart) lower the spec body schema
 // through the SchemaConverter; raw kinds present the body as a single string.
-func bodyInputSchema(op Operation, conv *SchemaConverter) (map[string]any, []RequestFilePart) {
+func bodyInputSchema(op Operation, conv *SchemaConverter, opPath string, sink *diagSink) (map[string]any, []RequestFilePart) {
 	switch op.RequestBodyKind {
 	case BodyOctet:
 		return map[string]any{
@@ -700,7 +881,7 @@ func bodyInputSchema(op Operation, conv *SchemaConverter) (map[string]any, []Req
 	bodySchema := conv.Convert(op.RequestBody)
 	var fileFields []RequestFilePart
 	if op.RequestBodyKind == BodyMultipart {
-		fileFields = rewriteMultipartBinaryFields(bodySchema, op.requestBodyEncoding)
+		fileFields = rewriteMultipartBinaryFields(bodySchema, op.requestBodyEncoding, opPath, sink)
 	}
 	return bodySchema, fileFields
 }
@@ -717,16 +898,16 @@ func bodyInputSchema(op Operation, conv *SchemaConverter) (map[string]any, []Req
 // Arrays of binary items are deliberately not walked in v1 — sending one
 // multipart part per array element requires a runtime contract this release
 // doesn't ship.
-func rewriteMultipartBinaryFields(root map[string]any, encoding openapi3.Encodings) []RequestFilePart {
+func rewriteMultipartBinaryFields(root map[string]any, encoding openapi3.Encodings, opPath string, sink *diagSink) []RequestFilePart {
 	var parts []RequestFilePart
-	walkMultipartProperties(root, "", encoding, &parts)
+	walkMultipartProperties(root, "", encoding, &parts, opPath, sink)
 	return parts
 }
 
 // walkMultipartProperties recurses into the `properties` map of node, rewriting
 // binary leaves and appending RequestFileParts. prefix is the JSON-pointer
 // path that locates node within the body object (empty for the root).
-func walkMultipartProperties(node map[string]any, prefix string, encoding openapi3.Encodings, parts *[]RequestFilePart) {
+func walkMultipartProperties(node map[string]any, prefix string, encoding openapi3.Encodings, parts *[]RequestFilePart, opPath string, sink *diagSink) {
 	propsAny, ok := node["properties"]
 	if !ok {
 		return
@@ -760,6 +941,12 @@ func walkMultipartProperties(node map[string]any, prefix string, encoding openap
 				if enc, ok := encoding[name]; ok && enc != nil {
 					part.ContentType = enc.ContentType
 				}
+			} else if enc, ok := encoding[name]; ok && enc != nil && sink != nil {
+				// The spec author declared encoding metadata under this leaf's
+				// name, but encoding keys address top-level properties only —
+				// the metadata cannot reach a nested part and is ignored.
+				sink.warn(DiagNestedMultipartEncoding, opPath,
+					fmt.Sprintf("encoding metadata %q does not apply to the nested binary field at %q; OpenAPI encoding keys address top-level multipart properties only, the part falls back to the runtime default content type", name, path))
 			}
 			*parts = append(*parts, part)
 			continue
@@ -767,7 +954,7 @@ func walkMultipartProperties(node map[string]any, prefix string, encoding openap
 		// Recurse into nested objects. Arrays / oneOf branches are not walked
 		// for binary content in v1.
 		if typeIs(sub, "object") || sub["properties"] != nil {
-			walkMultipartProperties(sub, path, encoding, parts)
+			walkMultipartProperties(sub, path, encoding, parts, opPath, sink)
 		}
 	}
 }
@@ -798,7 +985,7 @@ func contentKeys(c openapi3.Content) []string {
 	return keys
 }
 
-func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFilePart, error) {
+func buildInputSchema(op Operation, conv *SchemaConverter, opPath string, sink *diagSink) (string, []RequestFilePart, error) {
 	root := map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
@@ -814,11 +1001,14 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		groupProps := make(map[string]any, len(fields))
 		var groupRequired []any
 		for _, f := range fields {
+			var fieldSchema map[string]any
 			if f.Schema == nil {
-				groupProps[f.Name] = map[string]any{"type": "string"}
+				fieldSchema = map[string]any{"type": "string"}
 			} else {
-				groupProps[f.Name] = conv.Convert(f.Schema)
+				fieldSchema = conv.Convert(f.Schema)
 			}
+			mergeParamMetadata(fieldSchema, f)
+			groupProps[f.Name] = fieldSchema
 			if f.Required {
 				groupRequired = append(groupRequired, f.Name)
 			}
@@ -842,7 +1032,7 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 	addGroup(inCookie, op.CookieParams)
 
 	if op.HasRequestBody {
-		bodySchema, parts := bodyInputSchema(op, conv)
+		bodySchema, parts := bodyInputSchema(op, conv, opPath, sink)
 		props["body"] = bodySchema
 		fileFields = parts
 		if op.RequestBodyRequired {
@@ -865,6 +1055,31 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		return "", nil, fmt.Errorf("marshal input schema: %w", err)
 	}
 	return string(buf), fileFields, nil
+}
+
+// mergeParamMetadata copies Parameter-object-level description / example /
+// deprecated onto the converted schema map. The schema's own keywords win on
+// collision (OpenAPI says the schema is the authoritative type description;
+// the Parameter fields are supplementary), so each key is only set when
+// absent. A bare {"$ref":...} schema still receives the keys — draft-07
+// validators ignore $ref siblings but schema-aware MCP clients and 2020-12
+// consumers surface them, and losing the description entirely is worse.
+func mergeParamMetadata(schema map[string]any, f ParamField) {
+	if f.Description != "" {
+		if _, ok := schema["description"]; !ok {
+			schema["description"] = f.Description
+		}
+	}
+	if f.Example != nil {
+		if _, ok := schema["examples"]; !ok {
+			schema["examples"] = []any{f.Example}
+		}
+	}
+	if f.Deprecated {
+		if _, ok := schema["deprecated"]; !ok {
+			schema["deprecated"] = true
+		}
+	}
 }
 
 func goMethodName(operationID, method, path string) string {
@@ -892,14 +1107,24 @@ func callMethodFor(goName string, kind BodyKind) string {
 }
 
 func chooseDescription(op *openapi3.Operation) string {
+	var desc string
 	switch {
 	case op.Summary != "" && op.Description != "":
-		return op.Summary + "\n\n" + op.Description
+		desc = op.Summary + "\n\n" + op.Description
 	case op.Summary != "":
-		return op.Summary
+		desc = op.Summary
 	default:
-		return op.Description
+		desc = op.Description
 	}
+	if op.Deprecated {
+		// MCP has no native deprecated flag on tools; a description prefix is
+		// the only channel every client (and the LLM) sees.
+		if desc == "" {
+			return "Deprecated."
+		}
+		return "Deprecated. " + desc
+	}
+	return desc
 }
 
 // goSafeIdent turns an OpenAPI parameter name into a valid Go identifier.

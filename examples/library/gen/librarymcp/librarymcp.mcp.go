@@ -32,9 +32,11 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// GET /authors/{authorId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getAuthor",
-			Description:    "Fetch an author by id",
-			RawInputSchema: json.RawMessage(input_getAuthor),
+			Name:            "getAuthor",
+			Description:     "Fetch an author by id",
+			RawInputSchema:  json.RawMessage(input_getAuthor),
+			RawOutputSchema: json.RawMessage(output_getAuthor),
+			Annotations:     &runtime.ToolAnnotations{Title: "Fetch an author by id", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -69,6 +71,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			Name:           "listBooks",
 			Description:    "List books",
 			RawInputSchema: json.RawMessage(input_listBooks),
+			Annotations:    &runtime.ToolAnnotations{Title: "List books", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -100,9 +103,11 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// POST /books
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "createBook",
-			Description:    "Add a book",
-			RawInputSchema: json.RawMessage(input_createBook),
+			Name:            "createBook",
+			Description:     "Add a book",
+			RawInputSchema:  json.RawMessage(input_createBook),
+			RawOutputSchema: json.RawMessage(output_createBook),
+			Annotations:     &runtime.ToolAnnotations{Title: "Add a book"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -141,6 +146,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			Name:           "deleteBook",
 			Description:    "Delete a book",
 			RawInputSchema: json.RawMessage(input_deleteBook),
+			Annotations:    &runtime.ToolAnnotations{Title: "Delete a book", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -172,9 +178,11 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// GET /books/{bookId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getBook",
-			Description:    "Fetch a book by id",
-			RawInputSchema: json.RawMessage(input_getBook),
+			Name:            "getBook",
+			Description:     "Fetch a book by id",
+			RawInputSchema:  json.RawMessage(input_getBook),
+			RawOutputSchema: json.RawMessage(output_getBook),
+			Annotations:     &runtime.ToolAnnotations{Title: "Fetch a book by id", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -234,6 +242,34 @@ const input_getAuthor = `{
   "required": [
     "path"
   ],
+  "type": "object"
+}`
+
+const output_getAuthor = `{
+  "$defs": {
+    "Author": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Author"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`
 
@@ -308,6 +344,53 @@ const input_createBook = `{
   "type": "object"
 }`
 
+const output_createBook = `{
+  "$defs": {
+    "Author": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Book": {
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/Author"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Book"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_deleteBook = `{
   "properties": {
     "path": {
@@ -347,5 +430,52 @@ const input_getBook = `{
   "required": [
     "path"
   ],
+  "type": "object"
+}`
+
+const output_getBook = `{
+  "$defs": {
+    "Author": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Book": {
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/Author"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Book"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`

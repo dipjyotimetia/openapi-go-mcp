@@ -36,7 +36,40 @@ type Tool struct {
 	Description     string
 	RawInputSchema  json.RawMessage
 	RawOutputSchema json.RawMessage
+	// Annotations carries the MCP tool-annotation hints. Nil means "no
+	// annotations" — the underlying SDK omits the block entirely.
+	Annotations *ToolAnnotations
 }
+
+// ToolAnnotations mirrors the MCP specification's tool annotation hints
+// independent of any MCP library. Generated code derives them from the
+// operation's HTTP method (GET/HEAD → read-only + idempotent, DELETE →
+// destructive + idempotent, PUT → idempotent).
+//
+// ReadOnlyHint and IdempotentHint are plain bools because the protocol
+// default for both is false — leaving them unset and setting them to false
+// are equivalent. DestructiveHint and OpenWorldHint default to TRUE in the
+// protocol, so they are pointers: nil means "unset, use the protocol
+// default", a non-nil value is an explicit override (see BoolPtr).
+type ToolAnnotations struct {
+	// Title is a human-readable display name for the tool.
+	Title string
+	// ReadOnlyHint, if true, signals the tool does not modify its environment.
+	ReadOnlyHint bool
+	// IdempotentHint, if true, signals repeated calls with the same arguments
+	// have no additional effect. Meaningful only when ReadOnlyHint is false.
+	IdempotentHint bool
+	// DestructiveHint, if true, signals the tool may perform destructive
+	// updates. Meaningful only when ReadOnlyHint is false.
+	DestructiveHint *bool
+	// OpenWorldHint, if true, signals the tool interacts with an open world of
+	// external entities.
+	OpenWorldHint *bool
+}
+
+// BoolPtr returns a pointer to v. Helper for the *bool annotation hints whose
+// protocol default is true and therefore need explicit pointers to override.
+func BoolPtr(v bool) *bool { return &v }
 
 // ToolHandler is the callback invoked when an MCP client calls a tool.
 // Returning a non-nil error is a protocol error; tool-level failures (HTTP

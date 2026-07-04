@@ -10,6 +10,7 @@ package generator
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"text/template"
@@ -63,6 +64,12 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 			Name:           "{{.ToolName}}",
 			Description:    {{quote .Description}},
 			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
+			{{- if .OutputSchemaJSON}}
+			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
+			{{- end}}
+			{{- with annotationsLit .}}
+			Annotations: {{.}},
+			{{- end}}
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -150,6 +157,9 @@ func headerOf(r *http.Response) http.Header {
 
 {{range .Ops}}
 const {{schemaConst .ToolName}} = ` + "`{{.InputSchemaJSON}}`" + `
+{{if .OutputSchemaJSON}}
+const {{outputSchemaConst .ToolName}} = ` + "`{{.OutputSchemaJSON}}`" + `
+{{end}}
 {{end}}
 `
 
@@ -216,6 +226,12 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 			Name:           "{{.ToolName}}",
 			Description:    {{quote .Description}},
 			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
+			{{- if .OutputSchemaJSON}}
+			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
+			{{- end}}
+			{{- with annotationsLit .}}
+			Annotations: {{.}},
+			{{- end}}
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -389,6 +405,9 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 
 {{range .Ops}}
 const {{schemaConst .ToolName}} = ` + "`{{.InputSchemaJSON}}`" + `
+{{if .OutputSchemaJSON}}
+const {{outputSchemaConst .ToolName}} = ` + "`{{.OutputSchemaJSON}}`" + `
+{{end}}
 {{end}}
 `
 
@@ -399,6 +418,10 @@ func templateFuncs() template.FuncMap {
 		"schemaConst": func(toolName string) string {
 			return "input_" + safeIdent(toolName)
 		},
+		"outputSchemaConst": func(toolName string) string {
+			return "output_" + safeIdent(toolName)
+		},
+		"annotationsLit": annotationsLit,
 		"paramsTypeName": func(goMethod string) string {
 			base := strings.TrimSuffix(goMethod, "WithResponse")
 			return base + "Params"
@@ -413,6 +436,37 @@ func templateFuncs() template.FuncMap {
 		// "api-key" → "ApiKey".
 		"pascalCase": PascalCase,
 	}
+}
+
+// annotationsLit renders a *runtime.ToolAnnotations Go literal for op, or ""
+// when the operation yields no annotations (POST/PATCH with no summary).
+// Hints derive from the HTTP method per RFC 9110 semantics:
+//
+//   - GET / HEAD / OPTIONS / TRACE — safe methods: read-only + idempotent.
+//   - PUT — idempotent.
+//   - DELETE — idempotent, and explicitly destructive (the protocol default
+//     for destructiveHint is already true; DELETE states it outright).
+//   - POST / PATCH — no hints; the protocol defaults (not read-only, not
+//     idempotent, possibly destructive) already describe them.
+//
+// The operation summary becomes the Title (human-readable display name).
+func annotationsLit(op Operation) string {
+	var fields []string
+	if op.Summary != "" {
+		fields = append(fields, "Title: "+goQuote(op.Summary))
+	}
+	switch strings.ToUpper(op.Method) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		fields = append(fields, "ReadOnlyHint: true", "IdempotentHint: true")
+	case http.MethodPut:
+		fields = append(fields, "IdempotentHint: true")
+	case http.MethodDelete:
+		fields = append(fields, "IdempotentHint: true", "DestructiveHint: runtime.BoolPtr(true)")
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	return "&runtime.ToolAnnotations{" + strings.Join(fields, ", ") + "}"
 }
 
 // bodyTypeName returns the oapi-codegen-generated Go type name for the typed

@@ -35,6 +35,7 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 			Name:           "findPets",
 			Description:    "Returns all pets from the system that the user has access to",
 			RawInputSchema: json.RawMessage(input_findPets),
+			Annotations:    &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -66,9 +67,10 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 	// POST /pets
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "addPet",
-			Description:    "Creates a new pet in the store.  Duplicates are allowed",
-			RawInputSchema: json.RawMessage(input_addPet),
+			Name:            "addPet",
+			Description:     "Creates a new pet in the store.  Duplicates are allowed",
+			RawInputSchema:  json.RawMessage(input_addPet),
+			RawOutputSchema: json.RawMessage(output_addPet),
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -103,6 +105,7 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 			Name:           "deletePet",
 			Description:    "deletes a single pet based on the ID supplied",
 			RawInputSchema: json.RawMessage(input_deletePet),
+			Annotations:    &runtime.ToolAnnotations{IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -134,9 +137,11 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c pet.ClientWithResponse
 	// GET /pets/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "findPetById",
-			Description:    "Returns a user based on a single ID, if the user does not have access to the pet",
-			RawInputSchema: json.RawMessage(input_findPetById),
+			Name:            "findPetById",
+			Description:     "Returns a user based on a single ID, if the user does not have access to the pet",
+			RawInputSchema:  json.RawMessage(input_findPetById),
+			RawOutputSchema: json.RawMessage(output_findPetById),
+			Annotations:     &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -183,10 +188,12 @@ const input_findPets = `{
     "query": {
       "properties": {
         "limit": {
+          "description": "maximum number of results to return",
           "format": "int32",
           "type": "integer"
         },
         "tags": {
+          "description": "tags to filter by",
           "items": {
             "type": "string"
           },
@@ -227,11 +234,58 @@ const input_addPet = `{
   "type": "object"
 }`
 
+const output_addPet = `{
+  "$defs": {
+    "NewPet": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Pet": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/NewPet"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Pet"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_deletePet = `{
   "properties": {
     "path": {
       "properties": {
         "id": {
+          "description": "ID of pet to delete",
           "format": "int64",
           "type": "integer"
         }
@@ -253,6 +307,7 @@ const input_findPetById = `{
     "path": {
       "properties": {
         "id": {
+          "description": "ID of pet to fetch",
           "format": "int64",
           "type": "integer"
         }
@@ -266,5 +321,51 @@ const input_findPetById = `{
   "required": [
     "path"
   ],
+  "type": "object"
+}`
+
+const output_findPetById = `{
+  "$defs": {
+    "NewPet": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Pet": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/NewPet"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Pet"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`
