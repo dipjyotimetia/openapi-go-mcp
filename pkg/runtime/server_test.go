@@ -145,22 +145,119 @@ func TestNewToolResultFromHTTP_2xxText_VerbatimNotBase64(t *testing.T) {
 func TestNewToolResultFromHTTP_2xxNonJSON_Base64(t *testing.T) {
 	raw := []byte{0x01, 0x02, 0x03}
 	header := http.Header{}
-	header.Set("Content-Type", "image/png")
+	header.Set("Content-Type", "application/octet-stream")
 
 	res := NewToolResultFromHTTP(200, header, raw, "")
 	if res.IsError {
 		t.Fatalf("2xx binary should still be success")
 	}
+	if res.MediaKind != MediaNone {
+		t.Errorf("octet-stream must not surface as media, got %q", res.MediaKind)
+	}
 	sc, ok := res.StructuredContent.(map[string]any)
 	if !ok {
 		t.Fatalf("StructuredContent should be base64 envelope, got %T", res.StructuredContent)
 	}
-	if sc["contentType"] != "image/png" {
+	if sc["contentType"] != "application/octet-stream" {
 		t.Errorf("contentType: got %v", sc["contentType"])
 	}
 	want := base64.StdEncoding.EncodeToString(raw)
 	if sc["base64"] != want {
 		t.Errorf("base64: got %v want %s", sc["base64"], want)
+	}
+}
+
+func TestNewToolResultFromHTTP_2xxImage_NativeContent(t *testing.T) {
+	raw := []byte{0x89, 'P', 'N', 'G'}
+	header := http.Header{}
+	// Parameters must be stripped from the MIMEType surfaced to MCP clients.
+	header.Set("Content-Type", "image/png; charset=binary")
+	header.Set("ETag", `"img-1"`)
+
+	res := NewToolResultFromHTTP(200, header, raw, "")
+	if res.IsError {
+		t.Fatalf("2xx image should be success")
+	}
+	if res.MediaKind != MediaImage {
+		t.Fatalf("MediaKind: got %q want %q", res.MediaKind, MediaImage)
+	}
+	if res.MIMEType != "image/png" {
+		t.Errorf("MIMEType: got %q want image/png", res.MIMEType)
+	}
+	if string(res.Binary) != string(raw) {
+		t.Errorf("Binary should carry the raw bytes, got %v", res.Binary)
+	}
+	if res.Text != "" {
+		t.Errorf("media result must not duplicate payload into Text, got %q", res.Text)
+	}
+	if res.StructuredContent != nil {
+		t.Errorf("media result must have nil StructuredContent, got %v", res.StructuredContent)
+	}
+	if res.StatusCode != 200 || res.Headers["Etag"] != `"img-1"` && res.Headers["ETag"] != `"img-1"` {
+		t.Errorf("HTTP metadata should still be populated: status=%d headers=%v", res.StatusCode, res.Headers)
+	}
+}
+
+func TestNewToolResultFromHTTP_2xxAudio_NativeContent(t *testing.T) {
+	raw := []byte{0xFF, 0xFB, 0x90}
+	header := http.Header{}
+	header.Set("Content-Type", "audio/mpeg")
+
+	res := NewToolResultFromHTTP(200, header, raw, "")
+	if res.MediaKind != MediaAudio {
+		t.Fatalf("MediaKind: got %q want %q", res.MediaKind, MediaAudio)
+	}
+	if res.MIMEType != "audio/mpeg" {
+		t.Errorf("MIMEType: got %q", res.MIMEType)
+	}
+	if string(res.Binary) != string(raw) {
+		t.Errorf("Binary should carry the raw bytes, got %v", res.Binary)
+	}
+}
+
+func TestNewToolResultFromHTTP_ImageFallbackContentType(t *testing.T) {
+	// Upstream omitted Content-Type — the spec-declared fallback must drive
+	// the image branch.
+	raw := []byte{0xFF, 0xD8}
+	res := NewToolResultFromHTTP(200, nil, raw, "image/jpeg")
+	if res.MediaKind != MediaImage || res.MIMEType != "image/jpeg" {
+		t.Errorf("fallback CT should select image branch, got kind=%q mime=%q", res.MediaKind, res.MIMEType)
+	}
+}
+
+func TestNewToolResultFromHTTP_Non2xxImage_ErrorEnvelopeUnchanged(t *testing.T) {
+	raw := []byte{0x89, 'P', 'N', 'G'}
+	header := http.Header{}
+	header.Set("Content-Type", "image/png")
+
+	res := NewToolResultFromHTTP(404, header, raw, "")
+	if !res.IsError {
+		t.Fatalf("404 must be IsError")
+	}
+	if res.MediaKind != MediaNone {
+		t.Errorf("errors must not surface as media, got %q", res.MediaKind)
+	}
+	if _, ok := res.StructuredContent.(map[string]any); !ok {
+		t.Errorf("error envelope should remain, got %T", res.StructuredContent)
+	}
+}
+
+func TestNewToolResultImage(t *testing.T) {
+	raw := []byte{1, 2, 3}
+	res := NewToolResultImage(raw, "image/png")
+	if res.MediaKind != MediaImage || res.MIMEType != "image/png" || string(res.Binary) != string(raw) {
+		t.Errorf("unexpected image result: %+v", res)
+	}
+	if res.IsError || res.Text != "" || res.StructuredContent != nil {
+		t.Errorf("image result should carry only the media payload: %+v", res)
+	}
+}
+
+func TestNewToolResultAudio(t *testing.T) {
+	raw := []byte{4, 5, 6}
+	res := NewToolResultAudio(raw, "audio/wav")
+	if res.MediaKind != MediaAudio || res.MIMEType != "audio/wav" || string(res.Binary) != string(raw) {
+		t.Errorf("unexpected audio result: %+v", res)
 	}
 }
 
@@ -225,15 +322,25 @@ func TestClassifyContentType(t *testing.T) {
 		"text/plain":                      ctText,
 		"text/json":                       ctText, // text/* wins; LLM-readable
 		"text/html; charset=utf-8":        ctText,
+		"image/png":                       ctImage,
+		"image/jpeg; charset=binary":      ctImage,
+		"image/svg+xml":                   ctImage, // uniform image/* rule
+		"IMAGE/PNG":                       ctImage,
+		"audio/mpeg":                      ctAudio,
+		"audio/wav":                       ctAudio,
+		"video/mp4":                       ctOther, // MCP has no native video type
 		"application/xml":                 ctOther,
 		"application/octet-stream":        ctOther,
 		"":                                ctOther,
 		"   ":                             ctOther,
 	}
 	for ct, want := range cases {
-		if got := classifyContentType(ct); got != want {
+		if got, _ := classifyContentType(ct); got != want {
 			t.Errorf("classifyContentType(%q) = %v, want %v", ct, got, want)
 		}
+	}
+	if _, mt := classifyContentType("image/png; charset=binary"); mt != "image/png" {
+		t.Errorf("parsed media type should strip parameters, got %q", mt)
 	}
 }
 

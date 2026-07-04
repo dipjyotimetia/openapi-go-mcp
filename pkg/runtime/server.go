@@ -82,6 +82,20 @@ type CallToolRequest struct {
 	Arguments map[string]any
 }
 
+// MediaKind labels the native MCP content block a CallToolResult's Binary
+// payload should surface as. The empty value means "no media" — the result is
+// projected as text/structured content exactly as before the field existed.
+type MediaKind string
+
+const (
+	// MediaNone marks a result with no native media payload.
+	MediaNone MediaKind = ""
+	// MediaImage marks Binary as image bytes to surface as MCP ImageContent.
+	MediaImage MediaKind = "image"
+	// MediaAudio marks Binary as audio bytes to surface as MCP AudioContent.
+	MediaAudio MediaKind = "audio"
+)
+
 // CallToolResult is the response from a tool handler.
 //
 // StatusCode and Headers carry HTTP metadata from the upstream API call so MCP
@@ -95,6 +109,16 @@ type CallToolResult struct {
 	IsError           bool
 	StatusCode        int
 	Headers           map[string]string
+	// Binary carries raw (not base64) media bytes when MediaKind is set.
+	// Adapters project it into the MCP library's native ImageContent /
+	// AudioContent block instead of a TextContent block.
+	Binary []byte
+	// MediaKind selects which native content block Binary becomes. MediaNone
+	// (the zero value) means Binary is ignored and Text is projected as usual.
+	MediaKind MediaKind
+	// MIMEType is the media type of Binary (e.g. "image/png"), without
+	// parameters. Set if and only if MediaKind is set.
+	MIMEType string
 }
 
 // NewToolResultText creates a successful text result.
@@ -123,6 +147,8 @@ func NewToolResultJSON(jsonBytes []byte) *CallToolResult {
 // {"contentType": ..., "base64": ...} for clients that consume
 // StructuredContent. Useful for application/octet-stream, application/xml,
 // or any other response content type that doesn't naturally decode to JSON.
+// For image/audio payloads prefer NewToolResultImage / NewToolResultAudio,
+// which surface as native MCP content blocks that clients can render.
 func NewToolResultBinary(raw []byte, contentType string) *CallToolResult {
 	encoded := base64.StdEncoding.EncodeToString(raw)
 	return &CallToolResult{
@@ -132,6 +158,27 @@ func NewToolResultBinary(raw []byte, contentType string) *CallToolResult {
 			"base64":      encoded,
 		},
 	}
+}
+
+// NewToolResultImage creates a successful result carrying raw image bytes
+// that adapters surface as a native MCP ImageContent block, letting MCP
+// clients render the image directly instead of receiving base64 text.
+//
+// Text and StructuredContent are deliberately left empty: duplicating the
+// payload as base64 would double a multi-MB image on the wire, and the data
+// already lives in the native content block.
+//
+// Ownership: the caller transfers ownership of raw — the result holds the
+// buffer directly (no defensive copy), matching NewToolResultJSON.
+func NewToolResultImage(raw []byte, mimeType string) *CallToolResult {
+	return &CallToolResult{Binary: raw, MediaKind: MediaImage, MIMEType: mimeType}
+}
+
+// NewToolResultAudio creates a successful result carrying raw audio bytes
+// that adapters surface as a native MCP AudioContent block. See
+// NewToolResultImage for the ownership and payload-duplication notes.
+func NewToolResultAudio(raw []byte, mimeType string) *CallToolResult {
+	return &CallToolResult{Binary: raw, MediaKind: MediaAudio, MIMEType: mimeType}
 }
 
 // NewToolResultError creates an error text result.
@@ -147,6 +194,10 @@ func NewToolResultError(text string) *CallToolResult {
 // Decoding strategy:
 //   - 2xx with a JSON Content-Type (or "+json" suffix): body is wrapped as
 //     structured JSON via the same shape NewToolResultJSON produces.
+//   - 2xx with an image/* or audio/* Content-Type: body is surfaced as a
+//     native MCP ImageContent / AudioContent block (the shape
+//     NewToolResultImage / NewToolResultAudio produce) so clients can render
+//     it directly. No base64 text duplicate is emitted.
 //   - 2xx with any other Content-Type: body is surfaced as base64-encoded
 //     structured content matching NewToolResultBinary, except Headers/StatusCode
 //     are populated.
@@ -169,7 +220,7 @@ func NewToolResultFromHTTP(status int, header http.Header, body []byte, fallback
 	}
 	headers := selectResponseHeaders(header)
 
-	class := classifyContentType(ct)
+	class, mediaType := classifyContentType(ct)
 
 	if status >= 200 && status < 300 {
 		if len(body) == 0 {
@@ -191,6 +242,18 @@ func NewToolResultFromHTTP(status int, header http.Header, body []byte, fallback
 				StructuredContent: map[string]any{"contentType": ct, "text": string(body)},
 				StatusCode:        status,
 				Headers:           headers,
+			}
+		case ctImage, ctAudio:
+			kind := MediaImage
+			if class == ctAudio {
+				kind = MediaAudio
+			}
+			return &CallToolResult{
+				Binary:     body,
+				MediaKind:  kind,
+				MIMEType:   mediaType,
+				StatusCode: status,
+				Headers:    headers,
 			}
 		}
 		encoded := base64.StdEncoding.EncodeToString(body)
@@ -308,17 +371,23 @@ const (
 	ctOther contentClass = iota
 	ctJSON
 	ctText
+	ctImage
+	ctAudio
 )
 
-// classifyContentType parses ct via mime.ParseMediaType and bucketises it.
-// JSON covers the canonical "application/json" plus "+json" suffix variants
-// (e.g. application/problem+json). Text covers any text/* media type, which
-// the result helper surfaces verbatim instead of base64-encoding. Everything
-// else falls through to base64 binary. Invalid / empty content-types fall
-// into ctOther.
-func classifyContentType(ct string) contentClass {
+// classifyContentType parses ct via mime.ParseMediaType and bucketises it,
+// returning the class alongside the parsed parameter-free media type. JSON
+// covers the canonical "application/json" plus "+json" suffix variants (e.g.
+// application/problem+json) — the suffix check runs before the image/audio
+// prefixes, so a hypothetical image/foo+json stays JSON. Text covers any
+// text/* media type, which the result helper surfaces verbatim instead of
+// base64-encoding. Image and audio cover image/* (including image/svg+xml)
+// and audio/*, which surface as native MCP content blocks. Everything else
+// falls through to base64 binary. Invalid / empty content-types fall into
+// ctOther.
+func classifyContentType(ct string) (contentClass, string) {
 	if ct == "" {
-		return ctOther
+		return ctOther, ""
 	}
 	mediaType, _, err := mime.ParseMediaType(ct)
 	if err != nil {
@@ -329,9 +398,13 @@ func classifyContentType(ct string) contentClass {
 	}
 	switch {
 	case mediaType == "application/json", strings.HasSuffix(mediaType, "+json"):
-		return ctJSON
+		return ctJSON, mediaType
 	case strings.HasPrefix(mediaType, "text/"):
-		return ctText
+		return ctText, mediaType
+	case strings.HasPrefix(mediaType, "image/"):
+		return ctImage, mediaType
+	case strings.HasPrefix(mediaType, "audio/"):
+		return ctAudio, mediaType
 	}
-	return ctOther
+	return ctOther, mediaType
 }

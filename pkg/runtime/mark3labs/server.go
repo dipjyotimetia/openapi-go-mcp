@@ -15,6 +15,7 @@ package mark3labs
 
 import (
 	"context"
+	"encoding/base64"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -86,11 +87,28 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 	if result == nil {
 		return nil
 	}
+	// A set MediaKind wins over Text for the content block. The content slice
+	// is built directly instead of via mcp.NewToolResultImage/Audio, which
+	// prepend an extra empty text block and would break wire parity with the
+	// gosdk adapter. mark3labs wants base64 strings where gosdk wants raw
+	// bytes, so encode here. IsError is set manually for the same reason.
 	var res *mcp.CallToolResult
-	if result.IsError {
-		res = mcp.NewToolResultError(result.Text)
-	} else {
-		res = mcp.NewToolResultText(result.Text)
+	switch result.MediaKind {
+	case runtime.MediaImage, runtime.MediaAudio:
+		data := base64.StdEncoding.EncodeToString(result.Binary)
+		var block mcp.Content
+		if result.MediaKind == runtime.MediaImage {
+			block = mcp.ImageContent{Type: "image", Data: data, MIMEType: result.MIMEType}
+		} else {
+			block = mcp.AudioContent{Type: "audio", Data: data, MIMEType: result.MIMEType}
+		}
+		res = &mcp.CallToolResult{Content: []mcp.Content{block}, IsError: result.IsError}
+	default:
+		if result.IsError {
+			res = mcp.NewToolResultError(result.Text)
+		} else {
+			res = mcp.NewToolResultText(result.Text)
+		}
 	}
 	res.StructuredContent = result.StructuredContent
 	if meta := runtime.BuildHTTPMeta(result); meta != nil {
