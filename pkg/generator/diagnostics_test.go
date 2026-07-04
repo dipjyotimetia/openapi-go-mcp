@@ -190,24 +190,36 @@ func TestDiagnostics_DroppedLink(t *testing.T) {
 	}
 }
 
-func TestDiagnostics_NestedMultipartEncoding(t *testing.T) {
-	doc := docWith(t, "/x", func(op *openapi3.Operation, _ *openapi3.PathItem) {
+// multipartEncodingDoc builds a one-operation doc whose multipart body has a
+// binary property named "avatar" with encoding metadata keyed by that name.
+// When nested is true the property sits inside a "user" object, so the
+// encoding key can't reach it; when false it is top-level and applies.
+func multipartEncodingDoc(t *testing.T, nested bool) *openapi3.T {
+	t.Helper()
+	return docWith(t, "/x", func(op *openapi3.Operation, _ *openapi3.PathItem) {
 		binary := openapi3.NewStringSchema()
 		binary.Format = "binary"
-		nested := openapi3.NewObjectSchema()
-		nested.Properties = openapi3.Schemas{"avatar": binary.NewRef()}
 		body := openapi3.NewObjectSchema()
-		body.Properties = openapi3.Schemas{"user": nested.NewRef()}
+		if nested {
+			user := openapi3.NewObjectSchema()
+			user.Properties = openapi3.Schemas{"avatar": binary.NewRef()}
+			body.Properties = openapi3.Schemas{"user": user.NewRef()}
+		} else {
+			body.Properties = openapi3.Schemas{"avatar": binary.NewRef()}
+		}
 		mt := openapi3.NewMediaType().WithSchema(body)
 		mt.Encoding = map[string]*openapi3.Encoding{
-			// Keyed by the nested leaf's name — cannot apply, must warn.
 			"avatar": {ContentType: "image/png"},
 		}
 		op.RequestBody = &openapi3.RequestBodyRef{Value: &openapi3.RequestBody{
 			Content: openapi3.Content{"multipart/form-data": mt},
 		}}
 	})
-	if !hasDiagCode(diagsFor(t, doc), DiagNestedMultipartEncoding) {
+}
+
+func TestDiagnostics_NestedMultipartEncoding(t *testing.T) {
+	// Encoding keyed by a nested leaf's name cannot apply — must warn.
+	if !hasDiagCode(diagsFor(t, multipartEncodingDoc(t, true)), DiagNestedMultipartEncoding) {
 		t.Errorf("expected %q diagnostic", DiagNestedMultipartEncoding)
 	}
 }
@@ -215,20 +227,7 @@ func TestDiagnostics_NestedMultipartEncoding(t *testing.T) {
 func TestDiagnostics_NestedMultipartEncoding_NotFiredForTopLevel(t *testing.T) {
 	// encoding metadata on a top-level binary property is honoured, not
 	// dropped — the diagnostic must stay quiet.
-	doc := docWith(t, "/x", func(op *openapi3.Operation, _ *openapi3.PathItem) {
-		binary := openapi3.NewStringSchema()
-		binary.Format = "binary"
-		body := openapi3.NewObjectSchema()
-		body.Properties = openapi3.Schemas{"avatar": binary.NewRef()}
-		mt := openapi3.NewMediaType().WithSchema(body)
-		mt.Encoding = map[string]*openapi3.Encoding{
-			"avatar": {ContentType: "image/png"},
-		}
-		op.RequestBody = &openapi3.RequestBodyRef{Value: &openapi3.RequestBody{
-			Content: openapi3.Content{"multipart/form-data": mt},
-		}}
-	})
-	if hasDiagCode(diagsFor(t, doc), DiagNestedMultipartEncoding) {
+	if hasDiagCode(diagsFor(t, multipartEncodingDoc(t, false)), DiagNestedMultipartEncoding) {
 		t.Errorf("%q must not fire when the encoding key addresses a top-level property", DiagNestedMultipartEncoding)
 	}
 }

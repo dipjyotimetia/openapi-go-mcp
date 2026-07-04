@@ -47,13 +47,13 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 	if len(tool.RawOutputSchema) > 0 {
 		mt.OutputSchema = tool.RawOutputSchema
 	}
-	if a := tool.Annotations; a != nil {
+	if ann := tool.Annotations; ann != nil {
 		mt.Annotations = &mcp.ToolAnnotations{
-			Title:           a.Title,
-			ReadOnlyHint:    a.ReadOnlyHint,
-			IdempotentHint:  a.IdempotentHint,
-			DestructiveHint: a.DestructiveHint,
-			OpenWorldHint:   a.OpenWorldHint,
+			Title:           ann.Title,
+			ReadOnlyHint:    ann.ReadOnlyHint,
+			IdempotentHint:  ann.IdempotentHint,
+			DestructiveHint: ann.DestructiveHint,
+			OpenWorldHint:   ann.OpenWorldHint,
 		}
 	}
 

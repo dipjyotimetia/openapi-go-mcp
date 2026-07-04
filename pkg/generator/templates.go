@@ -10,11 +10,37 @@ package generator
 
 import (
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"text/template"
 )
+
+// toolLiteralSrc is the runtime.Tool registration literal, shared verbatim by
+// the companion and proxy templates. Keeping it in one fragment stops the two
+// emission paths from drifting — only companion output is golden-guarded, so
+// a proxy-only divergence would otherwise go unnoticed.
+const toolLiteralSrc = `s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:           "{{.ToolName}}",
+			Description:    {{quote .Description}},
+			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
+			{{- if .OutputSchemaJSON}}
+			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
+			{{- end}}
+			{{- with annotationsLit .}}
+			Annotations: {{.}},
+			{{- end}}
+		}, cfg),`
+
+// schemaConstsSrc emits the input_/output_ schema string constants at the end
+// of the generated file; shared by both templates for the same reason as
+// toolLiteralSrc. Built with explicit \n escapes because the fragment itself
+// emits Go raw-string backticks.
+const schemaConstsSrc = "{{range .Ops}}\n" +
+	"const {{schemaConst .ToolName}} = `{{.InputSchemaJSON}}`\n" +
+	"{{if .OutputSchemaJSON}}\n" +
+	"const {{outputSchemaConst .ToolName}} = `{{.OutputSchemaJSON}}`\n" +
+	"{{end}}\n{{end}}\n"
 
 // fileTemplate is the master template that emits the generated *.mcp.go file
 // in companion mode. Indentation and formatting are intentionally loose; the
@@ -59,18 +85,7 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 
 	{{range .Ops}}
 	// {{.Method}} {{.Path}}
-	s.AddTool(
-		runtime.ApplyConfig(runtime.Tool{
-			Name:           "{{.ToolName}}",
-			Description:    {{quote .Description}},
-			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
-			{{- if .OutputSchemaJSON}}
-			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
-			{{- end}}
-			{{- with annotationsLit .}}
-			Annotations: {{.}},
-			{{- end}}
-		}, cfg),
+	` + toolLiteralSrc + `
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
 			if cfg.RequestTimeout > 0 {
@@ -155,13 +170,7 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
-{{range .Ops}}
-const {{schemaConst .ToolName}} = ` + "`{{.InputSchemaJSON}}`" + `
-{{if .OutputSchemaJSON}}
-const {{outputSchemaConst .ToolName}} = ` + "`{{.OutputSchemaJSON}}`" + `
-{{end}}
-{{end}}
-`
+` + schemaConstsSrc
 
 // fileTemplateProxy is the master template for proxy mode. It emits a
 // *.mcp.go file whose handlers build *http.Request objects directly,
@@ -221,18 +230,7 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 
 	{{range .Ops}}
 	// {{.Method}} {{.Path}}
-	s.AddTool(
-		runtime.ApplyConfig(runtime.Tool{
-			Name:           "{{.ToolName}}",
-			Description:    {{quote .Description}},
-			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
-			{{- if .OutputSchemaJSON}}
-			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
-			{{- end}}
-			{{- with annotationsLit .}}
-			Annotations: {{.}},
-			{{- end}}
-		}, cfg),
+	` + toolLiteralSrc + `
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
 			if cfg.RequestTimeout > 0 {
@@ -403,13 +401,7 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 }
 {{end}}
 
-{{range .Ops}}
-const {{schemaConst .ToolName}} = ` + "`{{.InputSchemaJSON}}`" + `
-{{if .OutputSchemaJSON}}
-const {{outputSchemaConst .ToolName}} = ` + "`{{.OutputSchemaJSON}}`" + `
-{{end}}
-{{end}}
-`
+` + schemaConstsSrc
 
 // templateFuncs provides the helpers used in fileTemplate.
 func templateFuncs() template.FuncMap {
@@ -438,30 +430,29 @@ func templateFuncs() template.FuncMap {
 	}
 }
 
-// annotationsLit renders a *runtime.ToolAnnotations Go literal for op, or ""
-// when the operation yields no annotations (POST/PATCH with no summary).
-// Hints derive from the HTTP method per RFC 9110 semantics:
-//
-//   - GET / HEAD / OPTIONS / TRACE — safe methods: read-only + idempotent.
-//   - PUT — idempotent.
-//   - DELETE — idempotent, and explicitly destructive (the protocol default
-//     for destructiveHint is already true; DELETE states it outright).
-//   - POST / PATCH — no hints; the protocol defaults (not read-only, not
-//     idempotent, possibly destructive) already describe them.
-//
-// The operation summary becomes the Title (human-readable display name).
+// annotationsLit renders op.Annotations (computed by toolAnnotations in
+// buildOperation — the policy lives there) as a *runtime.ToolAnnotations Go
+// literal, or "" when the operation carries none.
 func annotationsLit(op Operation) string {
-	var fields []string
-	if op.Summary != "" {
-		fields = append(fields, "Title: "+goQuote(op.Summary))
+	a := op.Annotations
+	if a == nil {
+		return ""
 	}
-	switch strings.ToUpper(op.Method) {
-	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		fields = append(fields, "ReadOnlyHint: true", "IdempotentHint: true")
-	case http.MethodPut:
+	var fields []string
+	if a.Title != "" {
+		fields = append(fields, "Title: "+goQuote(a.Title))
+	}
+	if a.ReadOnlyHint {
+		fields = append(fields, "ReadOnlyHint: true")
+	}
+	if a.IdempotentHint {
 		fields = append(fields, "IdempotentHint: true")
-	case http.MethodDelete:
-		fields = append(fields, "IdempotentHint: true", "DestructiveHint: runtime.BoolPtr(true)")
+	}
+	if a.DestructiveHint != nil {
+		fields = append(fields, fmt.Sprintf("DestructiveHint: runtime.BoolPtr(%t)", *a.DestructiveHint))
+	}
+	if a.OpenWorldHint != nil {
+		fields = append(fields, fmt.Sprintf("OpenWorldHint: runtime.BoolPtr(%t)", *a.OpenWorldHint))
 	}
 	if len(fields) == 0 {
 		return ""

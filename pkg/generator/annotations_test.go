@@ -15,11 +15,11 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-func TestAnnotationsLit_MethodMapping(t *testing.T) {
+func TestToolAnnotations_MethodMapping(t *testing.T) {
 	cases := []struct {
 		method  string
 		summary string
-		want    string
+		want    string // annotationsLit rendering of the derived annotations
 	}{
 		{"GET", "", "&runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true}"},
 		{"HEAD", "", "&runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true}"},
@@ -31,9 +31,9 @@ func TestAnnotationsLit_MethodMapping(t *testing.T) {
 		{"GET", "List widgets", `&runtime.ToolAnnotations{Title: "List widgets", ReadOnlyHint: true, IdempotentHint: true}`},
 	}
 	for _, tc := range cases {
-		got := annotationsLit(Operation{Method: tc.method, Summary: tc.summary})
+		got := annotationsLit(Operation{Annotations: toolAnnotations(tc.method, tc.summary)})
 		if got != tc.want {
-			t.Errorf("annotationsLit(%s, summary=%q):\n got  %s\n want %s", tc.method, tc.summary, got, tc.want)
+			t.Errorf("toolAnnotations(%s, summary=%q):\n got  %s\n want %s", tc.method, tc.summary, got, tc.want)
 		}
 	}
 }
@@ -56,7 +56,7 @@ func TestChooseDescription_DeprecatedPrefix(t *testing.T) {
 // outputSchemaFor runs CollectOperations over a one-operation doc whose GET
 // 200 response carries the given schema, returning the resulting
 // OutputSchemaJSON.
-func outputSchemaFor(t *testing.T, respSchema *openapi3.Schema, mutate func(*openapi3.Operation)) string {
+func outputSchemaFor(t *testing.T, respSchema *openapi3.Schema) string {
 	t.Helper()
 	desc := "OK"
 	responses := openapi3.NewResponses()
@@ -67,15 +67,10 @@ func outputSchemaFor(t *testing.T, respSchema *openapi3.Schema, mutate func(*ope
 		}
 	}
 	responses.Set("200", &openapi3.ResponseRef{Value: resp})
-	op := &openapi3.Operation{OperationID: "op", Responses: responses}
-	if mutate != nil {
-		mutate(op)
-	}
-	doc := docWith(t, "/x", func(o *openapi3.Operation, item *openapi3.PathItem) {
-		item.Get = op
-		_ = o
+	doc := docWith(t, "/x", func(o *openapi3.Operation, _ *openapi3.PathItem) {
+		o.Responses = responses
 	})
-	ops, _, err := CollectOperations(doc, Options{ClientImport: "ex/cli", Warnings: nil})
+	ops, _, err := CollectOperations(doc, Options{ClientImport: "ex/cli"})
 	if err != nil {
 		t.Fatalf("CollectOperations: %v", err)
 	}
@@ -88,7 +83,7 @@ func outputSchemaFor(t *testing.T, respSchema *openapi3.Schema, mutate func(*ope
 func TestOutputSchema_ObjectResponse(t *testing.T) {
 	schema := openapi3.NewObjectSchema()
 	schema.Properties = openapi3.Schemas{"id": openapi3.NewInt64Schema().NewRef()}
-	out := outputSchemaFor(t, schema, nil)
+	out := outputSchemaFor(t, schema)
 	if out == "" {
 		t.Fatal("object-rooted JSON response must produce an output schema")
 	}
@@ -100,13 +95,13 @@ func TestOutputSchema_ObjectResponse(t *testing.T) {
 func TestOutputSchema_ArrayResponseSkipped(t *testing.T) {
 	arr := openapi3.NewArraySchema()
 	arr.Items = openapi3.NewStringSchema().NewRef()
-	if out := outputSchemaFor(t, arr, nil); out != "" {
+	if out := outputSchemaFor(t, arr); out != "" {
 		t.Errorf("array-rooted response must not produce an output schema, got:\n%s", out)
 	}
 }
 
 func TestOutputSchema_NoJSONResponseSkipped(t *testing.T) {
-	if out := outputSchemaFor(t, nil, nil); out != "" {
+	if out := outputSchemaFor(t, nil); out != "" {
 		t.Errorf("contentless response must not produce an output schema, got:\n%s", out)
 	}
 }
