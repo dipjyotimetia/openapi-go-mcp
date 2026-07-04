@@ -137,6 +137,16 @@ openapi-go-mcp [flags]
                           mode this is treated as a base path and the slug
                           is appended (forward-slash join).
   -client-type NAME       client interface name (default ClientWithResponsesInterface)
+  -mode MODE              emission mode: companion (default) generates a
+                          *.mcp.go file that delegates to your oapi-codegen
+                          client; proxy generates a runnable Go module that
+                          calls the upstream API directly (no oapi-codegen)
+  -module PATH            module path for the generated go.mod. Required iff
+                          -mode=proxy; rejected otherwise. In batch mode it is
+                          a base path and each spec's slug is appended.
+  -sdk NAME               MCP SDK the proxy scaffold's main.go imports:
+                          gosdk (default, modelcontextprotocol/go-sdk) or
+                          mark3labs (mark3labs/mcp-go). Ignored in companion mode.
   -name-prefix PREFIX     static prefix added to every tool name
   -openai-compat          emit OpenAI-tool-compatible JSON Schema
   -prefer-content-type CT pick this content type for the request body when an

@@ -189,9 +189,11 @@ For `POST /pets` with a JSON body:
 ```go
 s.AddTool(
     runtime.ApplyConfig(runtime.Tool{
-        Name:           "addPet",
-        Description:    "Creates a new pet",
-        RawInputSchema: json.RawMessage(input_addPet),
+        Name:            "addPet",
+        Description:     "Creates a new pet",
+        RawInputSchema:  json.RawMessage(input_addPet),
+        RawOutputSchema: json.RawMessage(output_addPet), // emitted when the 2xx JSON response is object-rooted
+        Annotations:     &runtime.ToolAnnotations{Title: "Creates a new pet"},
     }, cfg),
     func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
         var body pet.AddPetJSONRequestBody
@@ -213,6 +215,11 @@ s.AddTool(
 ```
 
 The call signature follows oapi-codegen's deterministic argument order: `ctx`, positional path params, `*<Op>Params` (if query/header parameters exist), typed body (if a request body exists), `reqEditors...`.
+
+Two optional `runtime.Tool` fields are derived per operation:
+
+- **`Annotations`** — MCP tool hints from the HTTP method (RFC 9110 semantics): GET/HEAD/OPTIONS/TRACE → `ReadOnlyHint` + `IdempotentHint`, PUT → `IdempotentHint`, DELETE → `IdempotentHint` + explicit `DestructiveHint`. The operation `summary` becomes the annotation `Title`. Operations marked `deprecated: true` get a `Deprecated.` prefix on the tool description (MCP has no native flag).
+- **`RawOutputSchema`** — lowered from the operation's selected 2xx JSON response schema, but only when that schema is object-rooted (both MCP SDKs require output schemas with root `type: "object"`; array/scalar responses get none). A `default` response is used only when the operation declares no 2xx at all — a `default` next to a contentless 204 is the classic error branch and is not advertised as output. The schema describes the success payload; error results carry the `{status, headers, body}` envelope instead.
 
 ### Proxy mode
 

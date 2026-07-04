@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — MCP gap review
+
+- **Tool annotations** — every generated tool now carries MCP annotation hints derived from its HTTP method (RFC 9110 semantics): GET/HEAD/OPTIONS/TRACE → `readOnlyHint` + `idempotentHint`, PUT → `idempotentHint`, DELETE → `idempotentHint` + explicit `destructiveHint`. The operation `summary` becomes the annotation `title`. New library type `runtime.ToolAnnotations` (+ `runtime.BoolPtr` helper, `Tool.Annotations` field); both SDK adapters forward the hints. Applies to companion and proxy modes.
+- **Tool output schemas** — operations whose selected 2xx response is object-rooted JSON now declare an MCP `outputSchema` (new `output_<tool>` schema constants, `RawOutputSchema` populated). Array/scalar/non-JSON responses emit none (both SDKs require an object root). A `default` response feeds the output schema only when the operation declares no 2xx at all, so the classic "204 + default error" pattern doesn't advertise its error shape as output. The schema description notes that error results carry the `{status, headers, body}` envelope instead.
+- **Parameter-object metadata in input schemas** — `description`, `example`, and `deprecated` declared on the Parameter object (not its schema) are now merged into the tool input schema; the schema's own keywords win on collision. Previously this metadata was silently dropped.
+- **Deprecated operations surfaced** — `deprecated: true` on an operation now prefixes the tool description with `Deprecated.` (MCP has no native flag).
+- **Webhook / link / nested-multipart-encoding diagnostics are now emitted** — the codes `dropped-webhook` (OpenAPI 3.1 top-level `webhooks`, including webhooks-only documents), `dropped-link` (response `links`, named per `<status>.<link>`), and `nested-multipart-encoding` (encoding metadata keyed by a nested binary field's name, which OpenAPI cannot address) existed but never fired; these spec features were dropped with no trace. All three are warnings and therefore visible to `-warnings-as-errors` pipelines.
+- **`TODO.md` roadmap** — the file referenced by the architecture doc, design decisions, and CI comments now actually exists.
+- **E2E coverage for `-openai-compat`** — `tests/e2e/cli_test.go` drives the real binary against the composition-heavy complex-schemas fixture and asserts the strict-dialect invariants (no `$ref`/`oneOf`/`anyOf`/`allOf`/`$defs`, `additionalProperties:false` forced). The generator-level invariants test also gained the recursive fixture.
+
+### Fixed — MCP gap review
+
+- **`-openai-compat` stack overflow on recursive schemas.** The strict dialect inlines every reference, and the inlining path had no recursion guard — a self-referential schema (e.g. a comment tree) recursed until the process crashed. Re-entrant conversions now truncate to a permissive object stub whose description names the recursive component.
+- **Proxy scaffold SDK pins drifted from the tested versions.** The generated `go.mod` pinned `modelcontextprotocol/go-sdk v1.6.0` / `mark3labs/mcp-go v0.54.0` while this repo builds and tests against v1.6.1 / v0.55.1 — despite a comment claiming the pins track the repo. Now synced.
+- **README CLI reference documents proxy mode.** `-mode`, `-module`, and `-sdk` were implemented and used in the Quick Start but missing from the flag reference block.
+
 ### Added
 
 - **Multi-spec batch generation** — the `-spec` flag now accepts directories (walked recursively, filtered to `.yaml`/`.yml`/`.json`), glob patterns (stdlib `filepath.Glob` syntax: `*`, `?`, `[...]`), and comma-separated combinations of files / globs / directories. Single-file and URL inputs are unchanged. New package `pkg/batch` derives per-spec `PackageName` / `OutDir` / `ClientImport` from each matched spec's filename stem (`-out gen -spec apis/` writes `gen/billingmcp/billingmcp.mcp.go` etc.). `-client-import` is treated as a base path and the slug is appended with `path.Join` so generated import lines use forward slashes on every OS. Per-spec failures are accumulated and reported at end, exit code rolls up to `3` (`exitGenerate`); single-spec mode keeps its previous fail-fast behaviour and exit codes. Slug collisions (e.g. `v1/api.yaml` and `v2/api.yaml`) are reported with all source paths before any file is written. The flags `-package` and `-emit-v3` are rejected in batch mode (`exitUsage=1`) because they would produce ambiguous or overwriting output. `-list` is supported and groups operations by spec with `=== <path> ===` headers.
@@ -135,13 +151,15 @@ Initial public release.
 
 ### Known limitations
 
-- Only `application/json` response bodies are decoded into structured JSON; non-JSON responses are surfaced as raw bytes via `NewToolResultJSON` (the `Text` field is populated, but `StructuredContent` may be malformed for non-JSON payloads).
-- Multipart binary-field rewrite covers only top-level properties; nested binary leaves are not detected.
-- Multipart `encoding[field]` metadata (per-part content-type, custom headers, style) is ignored — every file part is sent as `application/octet-stream`.
-- A spec header parameter named `Content-Type` is silently overridden by oapi-codegen's `<Op>WithBodyWithResponse` for non-JSON request bodies.
+> **Note (historical):** this list describes v0.1.0 as released. Several items were addressed later: non-JSON response decoding, nested multipart binary fields, and multipart `encoding[field]` content-type metadata shipped in v0.1.1 (see its Added section above); the `discriminator` description hint also shipped in v0.1.1. The current limitations list lives in [`architecture.md`](architecture.md#known-limitations).
+
+- Only `application/json` response bodies are decoded into structured JSON; non-JSON responses are surfaced as raw bytes via `NewToolResultJSON` (the `Text` field is populated, but `StructuredContent` may be malformed for non-JSON payloads). *(Superseded in v0.1.1.)*
+- Multipart binary-field rewrite covers only top-level properties; nested binary leaves are not detected. *(Superseded in v0.1.1.)*
+- Multipart `encoding[field]` metadata (per-part content-type, custom headers, style) is ignored — every file part is sent as `application/octet-stream`. *(Per-part content-type shipped in v0.1.1 for top-level fields; custom headers/style remain unsupported.)*
+- A spec header parameter named `Content-Type` is silently overridden by oapi-codegen's `<Op>WithBodyWithResponse` for non-JSON request bodies. *(A generator warning for this shipped in v0.1.1.)*
 - Streaming responses (SSE, chunked) surface as raw bytes; no first-class streaming support yet.
 - No dynamic (no-codegen, reflection-based) registration path yet. Tracked in `TODO.md`.
-- `discriminator` is dropped during schema conversion — JSON Schema has no direct equivalent.
+- `discriminator` is dropped during schema conversion — JSON Schema has no direct equivalent. *(Surfaced as a description hint since v0.1.1.)*
 
 [Unreleased]: https://github.com/dipjyotimetia/openapi-go-mcp/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/dipjyotimetia/openapi-go-mcp/releases/tag/v0.1.1

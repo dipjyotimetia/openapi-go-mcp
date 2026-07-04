@@ -47,6 +47,15 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 	if len(tool.RawOutputSchema) > 0 {
 		mt.OutputSchema = tool.RawOutputSchema
 	}
+	if ann := tool.Annotations; ann != nil {
+		mt.Annotations = &mcp.ToolAnnotations{
+			Title:           ann.Title,
+			ReadOnlyHint:    ann.ReadOnlyHint,
+			IdempotentHint:  ann.IdempotentHint,
+			DestructiveHint: ann.DestructiveHint,
+			OpenWorldHint:   ann.OpenWorldHint,
+		}
+	}
 
 	a.s.AddTool(mt, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, err := runtime.DecodeArguments(req.Params.Arguments)

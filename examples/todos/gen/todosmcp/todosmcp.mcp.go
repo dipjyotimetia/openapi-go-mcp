@@ -35,6 +35,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			Name:           "listTodos",
 			Description:    "List todos\n\nReturns todos, optionally filtered by completion status.",
 			RawInputSchema: json.RawMessage(input_listTodos),
+			Annotations:    &runtime.ToolAnnotations{Title: "List todos", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -66,9 +67,11 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// POST /todos
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "createTodo",
-			Description:    "Create a todo",
-			RawInputSchema: json.RawMessage(input_createTodo),
+			Name:            "createTodo",
+			Description:     "Create a todo",
+			RawInputSchema:  json.RawMessage(input_createTodo),
+			RawOutputSchema: json.RawMessage(output_createTodo),
+			Annotations:     &runtime.ToolAnnotations{Title: "Create a todo"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -103,6 +106,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			Name:           "deleteTodo",
 			Description:    "Delete a todo",
 			RawInputSchema: json.RawMessage(input_deleteTodo),
+			Annotations:    &runtime.ToolAnnotations{Title: "Delete a todo", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -134,9 +138,11 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// GET /todos/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getTodo",
-			Description:    "Get a todo by ID",
-			RawInputSchema: json.RawMessage(input_getTodo),
+			Name:            "getTodo",
+			Description:     "Get a todo by ID",
+			RawInputSchema:  json.RawMessage(input_getTodo),
+			RawOutputSchema: json.RawMessage(output_getTodo),
+			Annotations:     &runtime.ToolAnnotations{Title: "Get a todo by ID", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -168,9 +174,11 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// PUT /todos/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "updateTodo",
-			Description:    "Update a todo\n\nPartially update a todo. Omitted fields are left unchanged.",
-			RawInputSchema: json.RawMessage(input_updateTodo),
+			Name:            "updateTodo",
+			Description:     "Update a todo\n\nPartially update a todo. Omitted fields are left unchanged.",
+			RawInputSchema:  json.RawMessage(input_updateTodo),
+			RawOutputSchema: json.RawMessage(output_updateTodo),
+			Annotations:     &runtime.ToolAnnotations{Title: "Update a todo", IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -221,9 +229,11 @@ const input_listTodos = `{
     "query": {
       "properties": {
         "completed": {
+          "description": "When set, only return todos with the matching completion state.",
           "type": "boolean"
         },
         "limit": {
+          "description": "Maximum number of todos to return (1-100).",
           "format": "int32",
           "maximum": 100,
           "minimum": 1,
@@ -266,11 +276,53 @@ const input_createTodo = `{
   "type": "object"
 }`
 
+const output_createTodo = `{
+  "$defs": {
+    "Todo": {
+      "properties": {
+        "completed": {
+          "description": "Whether the task is done.",
+          "type": "boolean"
+        },
+        "createdAt": {
+          "description": "When the todo was created (RFC3339).",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "Server-assigned identifier.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Human-readable summary of the task.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "completed",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Todo"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
 const input_deleteTodo = `{
   "properties": {
     "path": {
       "properties": {
         "id": {
+          "description": "Numeric identifier of the todo.",
           "format": "int64",
           "type": "integer"
         }
@@ -292,6 +344,7 @@ const input_getTodo = `{
     "path": {
       "properties": {
         "id": {
+          "description": "Numeric identifier of the todo.",
           "format": "int64",
           "type": "integer"
         }
@@ -305,6 +358,47 @@ const input_getTodo = `{
   "required": [
     "path"
   ],
+  "type": "object"
+}`
+
+const output_getTodo = `{
+  "$defs": {
+    "Todo": {
+      "properties": {
+        "completed": {
+          "description": "Whether the task is done.",
+          "type": "boolean"
+        },
+        "createdAt": {
+          "description": "When the todo was created (RFC3339).",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "Server-assigned identifier.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Human-readable summary of the task.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "completed",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Todo"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`
 
@@ -330,6 +424,7 @@ const input_updateTodo = `{
     "path": {
       "properties": {
         "id": {
+          "description": "Numeric identifier of the todo.",
           "format": "int64",
           "type": "integer"
         }
@@ -344,5 +439,46 @@ const input_updateTodo = `{
     "path",
     "body"
   ],
+  "type": "object"
+}`
+
+const output_updateTodo = `{
+  "$defs": {
+    "Todo": {
+      "properties": {
+        "completed": {
+          "description": "Whether the task is done.",
+          "type": "boolean"
+        },
+        "createdAt": {
+          "description": "When the todo was created (RFC3339).",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "Server-assigned identifier.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Human-readable summary of the task.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "completed",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Todo"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "type": "object"
 }`

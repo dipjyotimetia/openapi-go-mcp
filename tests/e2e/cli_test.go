@@ -188,6 +188,47 @@ func TestCLI_EmitV3_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestCLI_Generate_OpenAICompat_StrictSchemas drives the CLI end-to-end with
+// -openai-compat against the composition-heavy complex-schemas fixture and
+// asserts the emitted schemas honour the OpenAI-strict dialect: no $ref, no
+// oneOf/anyOf/allOf survivors, and additionalProperties:false forced on
+// objects. Complements the unit-level invariants in
+// pkg/generator/openai_compat_test.go by exercising the real binary + flag
+// plumbing.
+func TestCLI_Generate_OpenAICompat_StrictSchemas(t *testing.T) {
+	outDir := t.TempDir()
+	_, stderr, err := runCLI(t,
+		"-spec", "testdata/complex-schemas-v3.yaml",
+		"-out", outDir,
+		"-package", "complexcompat",
+		"-client-import", "github.com/example/complex",
+		"-openai-compat",
+	)
+	if err != nil {
+		t.Fatalf("CLI failed: %v\nstderr=%s", err, stderr)
+	}
+
+	path := filepath.Join(outDir, "complexcompat.mcp.go")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	text := string(content)
+
+	for _, banned := range []string{`"$ref"`, `"oneOf"`, `"anyOf"`, `"allOf"`, `"$defs"`} {
+		if strings.Contains(text, banned) {
+			t.Errorf("-openai-compat output must not contain %s", banned)
+		}
+	}
+	if !strings.Contains(text, `"additionalProperties": false`) {
+		t.Error(`-openai-compat output must force "additionalProperties": false on objects`)
+	}
+	// The strict dialect must still produce a registrable file.
+	if !strings.Contains(text, "package complexcompat") {
+		t.Error("generated file missing package clause")
+	}
+}
+
 func TestCLI_Generate_ProducesCompilingFile(t *testing.T) {
 	outDir := t.TempDir()
 	_, stderr, err := runCLI(t,

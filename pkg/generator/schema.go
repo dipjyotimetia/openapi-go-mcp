@@ -83,29 +83,53 @@ func (c *SchemaConverter) Convert(ref *openapi3.SchemaRef) map[string]any {
 		return map[string]any{}
 	}
 
-	if !c.OpenAICompat {
-		// Resolve the canonical name for this schema. Prefer the explicit
-		// $ref string; otherwise consult the pointer registry populated by
-		// Bind.
-		name := refName(ref.Ref)
-		if name == "" {
-			name = c.nameByPtr[ref.Value]
+	if c.OpenAICompat {
+		// The strict dialect inlines every reference, so a recursive schema
+		// would recurse forever. OpenAI-compatible schemas cannot express
+		// recursion (no $ref); truncate re-entrant conversions to a
+		// permissive object stub with an explanatory description.
+		if ref.Value != nil {
+			if name, busy := c.inFlight[ref.Value]; busy {
+				desc := "Recursive schema truncated: the OpenAI-compatible dialect cannot express recursion."
+				if name != "" {
+					desc = "Recursive reference to " + name + " truncated: the OpenAI-compatible dialect cannot express recursion."
+				}
+				return map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"description":          desc,
+				}
+			}
+			c.inFlight[ref.Value] = c.nameFor(ref)
+			defer delete(c.inFlight, ref.Value)
 		}
-		if name != "" {
-			if _, alreadyDone := c.defs[name]; alreadyDone {
-				return map[string]any{"$ref": "#/$defs/" + name}
-			}
-			if _, busy := c.inFlight[ref.Value]; busy {
-				return map[string]any{"$ref": "#/$defs/" + name}
-			}
-			c.inFlight[ref.Value] = name
-			c.defs[name] = c.convertSchema(ref.Value)
-			delete(c.inFlight, ref.Value)
+		return c.convertSchema(ref.Value)
+	}
+
+	if name := c.nameFor(ref); name != "" {
+		if _, alreadyDone := c.defs[name]; alreadyDone {
 			return map[string]any{"$ref": "#/$defs/" + name}
 		}
+		if _, busy := c.inFlight[ref.Value]; busy {
+			return map[string]any{"$ref": "#/$defs/" + name}
+		}
+		c.inFlight[ref.Value] = name
+		c.defs[name] = c.convertSchema(ref.Value)
+		delete(c.inFlight, ref.Value)
+		return map[string]any{"$ref": "#/$defs/" + name}
 	}
 
 	return c.convertSchema(ref.Value)
+}
+
+// nameFor resolves the canonical component name for a schema: the explicit
+// $ref string wins; otherwise the pointer registry populated by Bind/Adopt is
+// consulted. Empty for anonymous schemas.
+func (c *SchemaConverter) nameFor(ref *openapi3.SchemaRef) string {
+	if name := refName(ref.Ref); name != "" {
+		return name
+	}
+	return c.nameByPtr[ref.Value]
 }
 
 func (c *SchemaConverter) convertSchema(s *openapi3.Schema) map[string]any {
@@ -324,12 +348,18 @@ func appendDiscriminatorHint(s *openapi3.Schema, out map[string]any) {
 		sort.Strings(keys)
 		parts = append(parts, "Values: "+strings.Join(keys, ", "))
 	}
-	hint := strings.Join(parts, ". ") + "."
+	appendDescription(out, strings.Join(parts, ". ")+".")
+}
+
+// appendDescription appends text to the schema's description under the
+// "\n\n" separator convention, or sets it when no description exists (or it
+// isn't a string).
+func appendDescription(out map[string]any, text string) {
 	if existing, ok := out["description"].(string); ok && existing != "" {
-		out["description"] = existing + "\n\n" + hint
-	} else {
-		out["description"] = hint
+		out["description"] = existing + "\n\n" + text
+		return
 	}
+	out["description"] = text
 }
 
 func (c *SchemaConverter) convertList(refs openapi3.SchemaRefs) []any {

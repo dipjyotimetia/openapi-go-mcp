@@ -36,8 +36,8 @@ var mcpSDKDeps = map[string]struct {
 	Module  string
 	Version string
 }{
-	"gosdk":     {Module: "github.com/modelcontextprotocol/go-sdk", Version: "v1.6.0"},
-	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.54.0"},
+	"gosdk":     {Module: "github.com/modelcontextprotocol/go-sdk", Version: "v1.6.1"},
+	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.55.1"},
 }
 
 // ScaffoldOverrides lets callers (mainly tests) tweak fields the generator

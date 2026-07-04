@@ -146,6 +146,92 @@ func TestDiagnostics_ServerVariables(t *testing.T) {
 	}
 }
 
+func TestDiagnostics_DroppedWebhook(t *testing.T) {
+	doc := docWith(t, "/x", func(_ *openapi3.Operation, _ *openapi3.PathItem) {})
+	doc.Webhooks = map[string]*openapi3.PathItem{
+		"newUser": {Post: &openapi3.Operation{OperationID: "newUserHook", Responses: newOKResponses()}},
+	}
+	if !hasDiagCode(diagsFor(t, doc), DiagDroppedWebhook) {
+		t.Errorf("expected %q diagnostic", DiagDroppedWebhook)
+	}
+}
+
+func TestDiagnostics_DroppedWebhook_WebhooksOnlyDoc(t *testing.T) {
+	// A 3.1 document may declare webhooks with no paths at all; the
+	// diagnostic must still fire even though CollectOperations has no
+	// operations to walk.
+	doc := &openapi3.T{
+		OpenAPI: "3.1.0",
+		Info:    &openapi3.Info{Title: "Diag", Version: "1"},
+		Webhooks: map[string]*openapi3.PathItem{
+			"ping": {Post: &openapi3.Operation{OperationID: "pingHook", Responses: newOKResponses()}},
+		},
+	}
+	if !hasDiagCode(diagsFor(t, doc), DiagDroppedWebhook) {
+		t.Errorf("expected %q diagnostic on a webhooks-only document", DiagDroppedWebhook)
+	}
+}
+
+func TestDiagnostics_DroppedLink(t *testing.T) {
+	doc := docWith(t, "/x", func(op *openapi3.Operation, _ *openapi3.PathItem) {
+		resp := op.Responses.Value("200")
+		resp.Value.Links = openapi3.Links{
+			"getRelated": {Value: &openapi3.Link{OperationID: "related"}},
+		}
+	})
+	diags := diagsFor(t, doc)
+	if !hasDiagCode(diags, DiagDroppedLink) {
+		t.Fatalf("expected %q diagnostic", DiagDroppedLink)
+	}
+	for _, d := range diags {
+		if d.Code == DiagDroppedLink && !strings.Contains(d.Message, "200.getRelated") {
+			t.Errorf("link diagnostic should name the status.link pair, got %q", d.Message)
+		}
+	}
+}
+
+// multipartEncodingDoc builds a one-operation doc whose multipart body has a
+// binary property named "avatar" with encoding metadata keyed by that name.
+// When nested is true the property sits inside a "user" object, so the
+// encoding key can't reach it; when false it is top-level and applies.
+func multipartEncodingDoc(t *testing.T, nested bool) *openapi3.T {
+	t.Helper()
+	return docWith(t, "/x", func(op *openapi3.Operation, _ *openapi3.PathItem) {
+		binary := openapi3.NewStringSchema()
+		binary.Format = "binary"
+		body := openapi3.NewObjectSchema()
+		if nested {
+			user := openapi3.NewObjectSchema()
+			user.Properties = openapi3.Schemas{"avatar": binary.NewRef()}
+			body.Properties = openapi3.Schemas{"user": user.NewRef()}
+		} else {
+			body.Properties = openapi3.Schemas{"avatar": binary.NewRef()}
+		}
+		mt := openapi3.NewMediaType().WithSchema(body)
+		mt.Encoding = map[string]*openapi3.Encoding{
+			"avatar": {ContentType: "image/png"},
+		}
+		op.RequestBody = &openapi3.RequestBodyRef{Value: &openapi3.RequestBody{
+			Content: openapi3.Content{"multipart/form-data": mt},
+		}}
+	})
+}
+
+func TestDiagnostics_NestedMultipartEncoding(t *testing.T) {
+	// Encoding keyed by a nested leaf's name cannot apply — must warn.
+	if !hasDiagCode(diagsFor(t, multipartEncodingDoc(t, true)), DiagNestedMultipartEncoding) {
+		t.Errorf("expected %q diagnostic", DiagNestedMultipartEncoding)
+	}
+}
+
+func TestDiagnostics_NestedMultipartEncoding_NotFiredForTopLevel(t *testing.T) {
+	// encoding metadata on a top-level binary property is honoured, not
+	// dropped — the diagnostic must stay quiet.
+	if hasDiagCode(diagsFor(t, multipartEncodingDoc(t, false)), DiagNestedMultipartEncoding) {
+		t.Errorf("%q must not fire when the encoding key addresses a top-level property", DiagNestedMultipartEncoding)
+	}
+}
+
 func TestDiagnostics_StableOrdering(t *testing.T) {
 	// Combine a callback (warning) with a per-op security requirement (info)
 	// so the sink has at least one diagnostic of each severity to order.

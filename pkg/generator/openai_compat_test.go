@@ -34,12 +34,16 @@ import (
 //     request bodies (non-json-bodies) — guards the multipart binary-rewrite
 //     against accidentally producing structures incompatible with the compat
 //     transform.
+//   - recursive $refs, oneOf/allOf composition (complex-schemas) — pins the
+//     inFlight recursion guard on the compat inlining path; without it a
+//     self-referential schema recurses until the stack overflows.
 func TestRender_OpenAICompat(t *testing.T) {
 	fixtures := []struct {
 		name, spec, pkg string
 	}{
 		{"Petstore", "petstore-v3.yaml", "petstoremcp"},
 		{"NonJSONBodies", "non-json-bodies-v3.yaml", "nonjsonbodiesmcp"},
+		{"ComplexSchemas", "complex-schemas-v3.yaml", "complexmcp"},
 	}
 	for _, fx := range fixtures {
 		t.Run(fx.name, func(t *testing.T) {

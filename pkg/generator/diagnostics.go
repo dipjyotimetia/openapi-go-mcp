@@ -45,17 +45,29 @@ type Diagnostic struct {
 // Stable diagnostic codes. Add new codes here so all in-tree emitters can
 // reference them and tests can assert against them.
 const (
-	DiagDroppedCookieParam         = "dropped-cookie-param"
-	DiagDroppedCallback            = "dropped-callback"
-	DiagDroppedLink                = "dropped-link"
+	DiagDroppedCookieParam = "dropped-cookie-param"
+	DiagDroppedCallback    = "dropped-callback"
+	// DiagDroppedLink is emitted (warning) when a response declares `links`
+	// entries. MCP tools have no channel for operation-to-operation
+	// relationships, so the link metadata is dropped; the tool itself is
+	// generated normally.
+	DiagDroppedLink = "dropped-link"
+	// DiagDroppedWebhook is emitted (warning) when an OpenAPI 3.1 document
+	// declares top-level `webhooks`. Webhooks describe requests the API makes
+	// to its consumers, which has no MCP-tool equivalent; they are dropped.
 	DiagDroppedWebhook             = "dropped-webhook"
 	DiagDroppedSecurityRequirement = "dropped-security-requirement"
 	DiagDroppedServerVariables     = "dropped-server-variables"
 	DiagUnsupportedParameterStyle  = "unsupported-parameter-style"
 	DiagShadowedParameter          = "shadowed-parameter"
 	DiagMissingPathParam           = "missing-path-param"
-	DiagNestedMultipartEncoding    = "nested-multipart-encoding"
-	DiagContentTypeHeaderOverride  = "content-type-header-override"
+	// DiagNestedMultipartEncoding is emitted (warning) when a multipart body
+	// declares `encoding` metadata whose key names a binary field that is
+	// nested inside an object property. OpenAPI encoding keys address
+	// top-level properties only, so the metadata cannot reach the nested part
+	// and the runtime default per-part content type applies.
+	DiagNestedMultipartEncoding   = "nested-multipart-encoding"
+	DiagContentTypeHeaderOverride = "content-type-header-override"
 	// DiagExcludedByXMCP is emitted (info) when an operation is skipped due
 	// to an `x-mcp: false` extension at the operation, path-item, or
 	// document level. The Path field carries "<METHOD> <path>", the Message
