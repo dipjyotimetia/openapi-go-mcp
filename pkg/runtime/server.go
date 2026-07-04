@@ -243,18 +243,14 @@ func NewToolResultFromHTTP(status int, header http.Header, body []byte, fallback
 				StatusCode:        status,
 				Headers:           headers,
 			}
-		case ctImage:
-			return &CallToolResult{
-				Binary:     body,
-				MediaKind:  MediaImage,
-				MIMEType:   mediaType,
-				StatusCode: status,
-				Headers:    headers,
+		case ctImage, ctAudio:
+			kind := MediaImage
+			if class == ctAudio {
+				kind = MediaAudio
 			}
-		case ctAudio:
 			return &CallToolResult{
 				Binary:     body,
-				MediaKind:  MediaAudio,
+				MediaKind:  kind,
 				MIMEType:   mediaType,
 				StatusCode: status,
 				Headers:    headers,

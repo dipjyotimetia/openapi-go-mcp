@@ -731,7 +731,7 @@ func TestCLI_Proxy_ResponseShapes(t *testing.T) {
 			name: "200ImagePNG",
 			respond: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "image/png")
-				_, _ = w.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+				_, _ = w.Write(pngMagicBytes)
 			},
 			assertMCP: func(t *testing.T, resp string) {
 				// image/* responses surface as a native ImageContent block.
@@ -741,7 +741,7 @@ func TestCLI_Proxy_ResponseShapes(t *testing.T) {
 				if !strings.Contains(resp, `"mimeType":"image/png"`) {
 					t.Errorf("image content should carry mimeType image/png; got %s", resp)
 				}
-				wantB64 := base64.StdEncoding.EncodeToString([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+				wantB64 := base64.StdEncoding.EncodeToString(pngMagicBytes)
 				if !strings.Contains(resp, wantB64) {
 					t.Errorf("image content should carry base64 data %q; got %s", wantB64, resp)
 				}

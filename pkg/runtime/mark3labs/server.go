@@ -94,20 +94,15 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 	// bytes, so encode here. IsError is set manually for the same reason.
 	var res *mcp.CallToolResult
 	switch result.MediaKind {
-	case runtime.MediaImage:
-		res = &mcp.CallToolResult{Content: []mcp.Content{mcp.ImageContent{
-			Type:     "image",
-			Data:     base64.StdEncoding.EncodeToString(result.Binary),
-			MIMEType: result.MIMEType,
-		}}}
-		res.IsError = result.IsError
-	case runtime.MediaAudio:
-		res = &mcp.CallToolResult{Content: []mcp.Content{mcp.AudioContent{
-			Type:     "audio",
-			Data:     base64.StdEncoding.EncodeToString(result.Binary),
-			MIMEType: result.MIMEType,
-		}}}
-		res.IsError = result.IsError
+	case runtime.MediaImage, runtime.MediaAudio:
+		data := base64.StdEncoding.EncodeToString(result.Binary)
+		var block mcp.Content
+		if result.MediaKind == runtime.MediaImage {
+			block = mcp.ImageContent{Type: "image", Data: data, MIMEType: result.MIMEType}
+		} else {
+			block = mcp.AudioContent{Type: "audio", Data: data, MIMEType: result.MIMEType}
+		}
+		res = &mcp.CallToolResult{Content: []mcp.Content{block}, IsError: result.IsError}
 	default:
 		if result.IsError {
 			res = mcp.NewToolResultError(result.Text)
