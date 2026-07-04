@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — native media result types
+
+- **`image/*` and `audio/*` responses surface as native MCP content blocks.** A 2xx upstream response with an image or audio content type now produces an MCP `ImageContent` / `AudioContent` block (both SDK adapters, both companion and proxy modes), so MCP clients can render the media directly instead of receiving base64 text. The content-type parameters are stripped from the surfaced `mimeType` (`image/png; charset=binary` → `image/png`); classification follows the same precedence as before, so `+json` suffixes still win (`image/foo+json` stays JSON) and `image/svg+xml` counts as an image. New library surface: `runtime.CallToolResult` gains additive `Binary` / `MediaKind` / `MIMEType` fields, plus `runtime.NewToolResultImage` / `runtime.NewToolResultAudio` constructors and the `runtime.MediaKind` type. This closes the image/audio half of the "Richer MCP result types" roadmap item; embedded resources remain on the roadmap.
+
+### Changed — native media result types
+
+- **2xx `image/*`/`audio/*` responses no longer emit base64 text.** Previously these decoded like any other binary response: base64 into `Text` plus a `{"contentType","base64"}` structured envelope. The payload now lives only in the native media content block — duplicating multi-MB media as base64 text would double the wire size. Clients that parsed base64 out of the text block for image/audio responses must read the media block instead. All other binary types (`application/octet-stream`, `application/xml`, `video/*`, PDFs, …) are unchanged. HTTP status/header metadata (`_meta`) is unaffected.
+
 ### Added — MCP gap review
 
 - **Tool annotations** — every generated tool now carries MCP annotation hints derived from its HTTP method (RFC 9110 semantics): GET/HEAD/OPTIONS/TRACE → `readOnlyHint` + `idempotentHint`, PUT → `idempotentHint`, DELETE → `idempotentHint` + explicit `destructiveHint`. The operation `summary` becomes the annotation `title`. New library type `runtime.ToolAnnotations` (+ `runtime.BoolPtr` helper, `Tool.Annotations` field); both SDK adapters forward the hints. Applies to companion and proxy modes.

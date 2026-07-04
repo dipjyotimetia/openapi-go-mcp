@@ -10,10 +10,12 @@ package runtime_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"reflect"
 	"testing"
 
+	m3mcp "github.com/mark3labs/mcp-go/mcp"
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
@@ -79,6 +81,42 @@ func TestAdapterRegistration_BothAdapters(t *testing.T) {
 	}
 	gs.AddTool(tool, echoHandler)
 	ms.AddTool(tool, echoHandler)
+}
+
+func TestAdapterParity_MediaResultWireShape(t *testing.T) {
+	// The two SDKs model image content asymmetrically — gosdk takes raw bytes
+	// and base64-encodes during MarshalJSON, mark3labs takes a pre-encoded
+	// base64 string. Pin that both adapters' projections of the same
+	// runtime media result serialise to the identical wire object, since
+	// that asymmetry is exactly what the adapters must bridge.
+	raw := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A}
+	const mime = "image/png"
+
+	goWire, err := json.Marshal(&gosdkmcp.ImageContent{Data: raw, MIMEType: mime})
+	if err != nil {
+		t.Fatalf("gosdk marshal: %v", err)
+	}
+	m3Wire, err := json.Marshal(m3mcp.ImageContent{
+		Type:     "image",
+		Data:     base64.StdEncoding.EncodeToString(raw),
+		MIMEType: mime,
+	})
+	if err != nil {
+		t.Fatalf("mark3labs marshal: %v", err)
+	}
+
+	var goObj, m3Obj map[string]any
+	if err := json.Unmarshal(goWire, &goObj); err != nil {
+		t.Fatalf("gosdk wire: %v", err)
+	}
+	if err := json.Unmarshal(m3Wire, &m3Obj); err != nil {
+		t.Fatalf("mark3labs wire: %v", err)
+	}
+	for _, field := range []string{"type", "mimeType", "data"} {
+		if !reflect.DeepEqual(goObj[field], m3Obj[field]) {
+			t.Errorf("wire field %q diverged: gosdk=%v mark3labs=%v", field, goObj[field], m3Obj[field])
+		}
+	}
 }
 
 // Compile-time guard: the go-sdk Meta type stays a map[string]any. If

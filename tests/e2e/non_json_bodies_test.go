@@ -28,6 +28,10 @@ import (
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/gosdk"
 )
 
+// pngMagicBytes is the 8-byte PNG file signature — enough for the tests to
+// assert real image bytes survive the round-trip without shipping a fixture.
+var pngMagicBytes = []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+
 // newNonJSONUpstream returns a mock HTTP server covering every non-JSON body
 // route in examples/non-json-bodies. Each handler echoes a fixed JSON response
 // while the captured upstreamCall lets tests assert on the wire shape — body
@@ -61,9 +65,17 @@ func newNonJSONUpstream(t *testing.T) (*httptest.Server, *[]upstreamCall, *sync.
 		record(r)
 		w.WriteHeader(http.StatusOK)
 	})
-	// GET /blobs/{id} returns raw bytes — exercises the non-JSON response path.
+	// GET /blobs/{id} returns raw bytes — exercises the non-JSON response
+	// paths. The id "img" responds with an image content type (native MCP
+	// ImageContent); every other id stays application/octet-stream (base64
+	// text).
 	mux.HandleFunc("/blobs/", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
+		if strings.HasSuffix(r.URL.Path, "/img") {
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngMagicBytes)
+			return
+		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write([]byte{0xCA, 0xFE, 0xBA, 0xBE})
 	})
@@ -316,6 +328,42 @@ func TestE2E_NonJSON_Response_Binary_Base64Wrapped(t *testing.T) {
 	want := base64.StdEncoding.EncodeToString([]byte{0xCA, 0xFE, 0xBA, 0xBE})
 	if got := textOf(res); got != want {
 		t.Errorf("text content = %q, want %q", got, want)
+	}
+}
+
+func TestE2E_NonJSON_Response_Image_NativeImageContent(t *testing.T) {
+	upstream, _, _ := newNonJSONUpstream(t)
+	cs := connectNonJSONClient(t, upstream.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "downloadBlob",
+		Arguments: map[string]any{
+			"path": map[string]any{"id": "img"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %v", textOf(res))
+	}
+	// image/* responses surface as a native ImageContent block (the upstream
+	// Content-Type header wins over the spec-declared octet-stream fallback)
+	// so MCP clients can render the image directly.
+	if len(res.Content) != 1 {
+		t.Fatalf("content blocks = %d, want 1", len(res.Content))
+	}
+	img, ok := res.Content[0].(*mcp.ImageContent)
+	if !ok {
+		t.Fatalf("content block = %T, want *mcp.ImageContent", res.Content[0])
+	}
+	if img.MIMEType != "image/png" {
+		t.Errorf("mimeType = %q, want image/png", img.MIMEType)
+	}
+	if string(img.Data) != string(pngMagicBytes) {
+		t.Errorf("image data = %v, want PNG magic bytes", img.Data)
 	}
 }
 

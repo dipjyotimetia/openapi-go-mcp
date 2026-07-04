@@ -23,11 +23,13 @@ SSE and chunked responses currently surface as raw bytes in the tool result
 support means incremental delivery through the MCP progress/partial-result
 channel once the SDKs settle on a shape.
 
-## Richer MCP result types
+## Richer MCP result types: embedded resources
 
-Binary/image responses are base64-encoded into text today. Emitting native MCP
-`ImageContent` (and embedded resources) for matching response content types
-would let MCP clients render them directly.
+`image/*` and `audio/*` responses now surface as native MCP `ImageContent` /
+`AudioContent` blocks. The remaining gap is embedded resources for content
+MCP has no native type for (video, PDF, arbitrary binaries), which today
+stays base64-encoded text
+([known limitations](docs/architecture.md#known-limitations)).
 
 ## Parameter style lowering
 

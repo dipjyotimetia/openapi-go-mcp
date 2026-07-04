@@ -83,8 +83,20 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 	if result == nil {
 		return nil
 	}
+	// A set MediaKind wins over Text for the content block: media results
+	// carry the payload natively so clients can render it, and the runtime
+	// never populates both.
+	var content []mcp.Content
+	switch result.MediaKind {
+	case runtime.MediaImage:
+		content = []mcp.Content{&mcp.ImageContent{Data: result.Binary, MIMEType: result.MIMEType}}
+	case runtime.MediaAudio:
+		content = []mcp.Content{&mcp.AudioContent{Data: result.Binary, MIMEType: result.MIMEType}}
+	default:
+		content = []mcp.Content{&mcp.TextContent{Text: result.Text}}
+	}
 	out := &mcp.CallToolResult{
-		Content:           []mcp.Content{&mcp.TextContent{Text: result.Text}},
+		Content:           content,
 		StructuredContent: result.StructuredContent,
 		IsError:           result.IsError,
 	}
