@@ -3,10 +3,10 @@ module github.com/dipjyotimetia/openapi-go-mcp
 go 1.26
 
 require (
-	github.com/getkin/kin-openapi v0.141.0
+	github.com/getkin/kin-openapi v0.142.0
 	github.com/mark3labs/mcp-go v0.56.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/oapi-codegen/runtime v1.4.2
+	github.com/oapi-codegen/runtime v1.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
