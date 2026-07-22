@@ -138,9 +138,9 @@ paths:
 
 	server := &fakeServer{}
 	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{
-		HTTPClient:     upstream.Client(),
-		NamePrefix:     "widgets",
-		RequestTimeout: time.Second,
+		UpstreamHTTPClient: upstream.Client(),
+		NamePrefix:         "widgets",
+		RequestTimeout:     time.Second,
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
@@ -201,7 +201,7 @@ paths:
 	}
 
 	server := &fakeServer{}
-	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{HTTPClient: upstream.Client()}); err != nil {
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client()}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 	result, err := server.handlers["readSecure"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
@@ -213,6 +213,201 @@ paths:
 	}
 	if called {
 		t.Fatal("upstream received a request without the required credential")
+	}
+}
+
+func TestRegister_RemoteSourceRequiresExplicitBaseURL(t *testing.T) {
+	t.Parallel()
+
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `openapi: 3.0.3
+info: { title: Remote, version: 1.0.0 }
+servers: [ { url: http://169.254.169.254/latest } ]
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      responses: { "200": { description: ok } }
+`)
+	}))
+	defer source.Close()
+
+	err := dynamic.Register(context.Background(), &fakeServer{}, source.URL, dynamic.Config{SourceHTTPClient: source.Client()})
+	if err == nil || !strings.Contains(err.Error(), "requires dynamic.Config.BaseURL") {
+		t.Fatalf("Register() error = %v, want explicit BaseURL requirement", err)
+	}
+}
+
+func TestRegister_RemoteSourceUsesConfiguredUpstreamClientAndBaseURL(t *testing.T) {
+	t.Parallel()
+
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		if r.URL.Path != "/widgets" {
+			t.Errorf("path = %q, want /widgets", r.URL.Path)
+		}
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `openapi: 3.0.3
+info: { title: Remote, version: 1.0.0 }
+servers: [ { url: http://169.254.169.254/latest } ]
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      responses: { "200": { description: ok } }
+`)
+	}))
+	defer source.Close()
+
+	server := &fakeServer{}
+	err := dynamic.Register(context.Background(), server, source.URL, dynamic.Config{
+		SourceHTTPClient:   source.Client(),
+		UpstreamHTTPClient: upstream.Client(),
+		BaseURL:            upstream.URL,
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	result, err := server.handlers["listWidgets"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("handler() error = %v", err)
+	}
+	if result.IsError || !upstreamCalled {
+		t.Fatalf("result = %#v, upstreamCalled = %v", result, upstreamCalled)
+	}
+}
+
+func TestRegister_RejectsRemoteSourceRedirectsAndUnsafeSourceURLs(t *testing.T) {
+	t.Parallel()
+
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/spec.yaml", http.StatusFound)
+			return
+		}
+		_, _ = fmt.Fprint(w, `openapi: 3.0.3
+info: { title: Remote, version: 1.0.0 }
+paths: {}
+`)
+	}))
+	defer source.Close()
+
+	err := dynamic.Register(context.Background(), &fakeServer{}, source.URL+"/redirect", dynamic.Config{SourceHTTPClient: source.Client(), BaseURL: "https://api.example.test"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 302") {
+		t.Fatalf("redirect error = %v, want un-followed HTTP 302", err)
+	}
+
+	for _, sourceURL := range []string{
+		"https://user:password@example.test/openapi.yaml",
+		"https://example.test/openapi.yaml#fragment",
+		"http://example.test/openapi.yaml",
+	} {
+		err = dynamic.Register(context.Background(), &fakeServer{}, sourceURL, dynamic.Config{})
+		if err == nil {
+			t.Errorf("Register(%q) succeeded, want source validation failure", sourceURL)
+		}
+	}
+}
+
+func TestRegister_RejectsExternalReferencesInRemoteSource(t *testing.T) {
+	t.Parallel()
+
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `openapi: 3.0.3
+info: { title: Remote, version: 1.0.0 }
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: 'https://169.254.169.254/schema.yaml#/Widget' }
+`)
+	}))
+	defer source.Close()
+
+	err := dynamic.Register(context.Background(), &fakeServer{}, source.URL, dynamic.Config{
+		SourceHTTPClient: source.Client(),
+		BaseURL:          "https://api.example.test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "contains external $ref") {
+		t.Fatalf("Register() error = %v, want external reference rejection", err)
+	}
+}
+
+func TestRegister_ProviderSelectsOpenAISchema(t *testing.T) {
+	t.Parallel()
+
+	specPath := filepath.Join(t.TempDir(), "provider.yaml")
+	spec := `openapi: 3.0.3
+info: { title: Provider, version: 1.0.0 }
+servers: [ { url: https://api.example.test } ]
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Widget' }
+      responses: { "201": { description: created } }
+components:
+  schemas:
+    Widget:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+`
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	standard := &fakeServer{}
+	if err := dynamic.Register(context.Background(), standard, specPath, dynamic.Config{}); err != nil {
+		t.Fatalf("standard Register() error = %v", err)
+	}
+	openAI := &fakeServer{}
+	if err := dynamic.Register(context.Background(), openAI, specPath, dynamic.Config{Provider: runtime.LLMProviderOpenAI}); err != nil {
+		t.Fatalf("OpenAI Register() error = %v", err)
+	}
+	standardSchema := string(standard.tools["createWidget"].RawInputSchema)
+	openAISchema := string(openAI.tools["createWidget"].RawInputSchema)
+	if !strings.Contains(standardSchema, `"$defs"`) {
+		t.Errorf("standard schema does not retain definitions: %s", standardSchema)
+	}
+	if strings.Contains(openAISchema, `"$defs"`) || strings.Contains(openAISchema, `"$ref"`) {
+		t.Errorf("OpenAI schema must be flattened: %s", openAISchema)
+	}
+	if !strings.Contains(openAISchema, `"additionalProperties": false`) {
+		t.Errorf("OpenAI schema must be strict: %s", openAISchema)
+	}
+}
+
+func TestRegister_RejectsUnsafeConfiguredBaseURL(t *testing.T) {
+	t.Parallel()
+
+	specPath := filepath.Join(t.TempDir(), "base-url.yaml")
+	if err := os.WriteFile(specPath, []byte(`openapi: 3.0.3
+info: { title: Base, version: 1.0.0 }
+paths: {}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := dynamic.Register(context.Background(), &fakeServer{}, specPath, dynamic.Config{BaseURL: "https://user:password@example.test"})
+	if err == nil || !strings.Contains(err.Error(), "must not contain credentials") {
+		t.Fatalf("Register() error = %v, want unsafe BaseURL rejection", err)
 	}
 }
 
