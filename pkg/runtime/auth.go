@@ -40,6 +40,18 @@ type MissingCredentialError struct {
 	EnvVar     string
 }
 
+// UnsatisfiedSecurityError reports that an operation declares security but no
+// supported credential alternative is configured. It is deliberately distinct
+// from an upstream 401: callers can fix local configuration without leaking an
+// unauthenticated request to the API.
+type UnsatisfiedSecurityError struct {
+	Operation string
+}
+
+func (e *UnsatisfiedSecurityError) Error() string {
+	return fmt.Sprintf("no configured credential satisfies declared security for %s", e.Operation)
+}
+
 func (e *MissingCredentialError) Error() string {
 	return fmt.Sprintf("missing credential for security scheme %q: set %s in the environment", e.SchemeName, e.EnvVar)
 }

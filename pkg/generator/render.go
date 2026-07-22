@@ -191,8 +191,10 @@ func defaultBaseURL(doc *openapi3.T) string {
 func collectUsedSchemes(ops []Operation) []SecurityScheme {
 	seen := make(map[string]SecurityScheme)
 	for _, op := range ops {
-		for _, s := range op.Security {
-			seen[s.Name] = s
+		for _, alternative := range op.Security {
+			for _, s := range alternative {
+				seen[s.Name] = s
+			}
 		}
 	}
 	if len(seen) == 0 {

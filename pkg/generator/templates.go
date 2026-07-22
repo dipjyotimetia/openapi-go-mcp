@@ -341,12 +341,10 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 			}
 			{{- end}}
 
-			{{- if and (not .Anonymous) .Security}}
-			{{- range .Security}}
-			if err := applyAuth{{pascalCase .Name}}(httpReq); err != nil {
+			{{- if .AuthRequired}}
+			if err := applyAuthFor{{.GoName}}(httpReq); err != nil {
 				return runtime.HandleError(err)
 			}
-			{{- end}}
 			{{- end}}
 
 			httpResp, err := httpClient.Do(httpReq)
@@ -369,6 +367,17 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 }
 
 {{range .AllSchemes}}
+// hasAuth{{pascalCase .Name}} reports whether the environment supplies every
+// credential required for this security scheme. Policy helpers use it to
+// select an OpenAPI OR alternative without sending an unauthenticated request.
+func hasAuth{{pascalCase .Name}}() bool {
+{{- if eq (printf "%s" .Kind) "httpBasic"}}
+	return os.Getenv({{quote .UsernameEnvVar}}) != "" && os.Getenv({{quote .PasswordEnvVar}}) != ""
+{{- else}}
+	return os.Getenv({{quote .EnvVar}}) != ""
+{{- end}}
+}
+
 // applyAuth{{pascalCase .Name}} attaches credentials for the {{quote .Name}}
 // security scheme to req, reading them from the environment.
 func applyAuth{{pascalCase .Name}}(req *http.Request) error {
@@ -400,6 +409,23 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 {{- end}}
 }
 {{end}}
+
+{{range .Ops}}{{if .AuthRequired}}
+// applyAuthFor{{.GoName}} evaluates the OpenAPI security requirement for this
+// operation. Outer alternatives are OR; schemes within an alternative are AND.
+// If no complete alternative has credentials, no upstream request is made.
+func applyAuthFor{{.GoName}}(req *http.Request) error {
+{{range .Security}}
+	if {{range $index, $scheme := .}}{{if $index}} && {{end}}hasAuth{{pascalCase $scheme.Name}}(){{end}} {
+		{{range .}}if err := applyAuth{{pascalCase .Name}}(req); err != nil {
+			return err
+		}
+		{{end}}return nil
+	}
+{{end}}
+	return &runtime.UnsatisfiedSecurityError{Operation: {{quote (printf "%s %s" .Method .Path)}}}
+}
+{{end}}{{end}}
 
 ` + schemaConstsSrc
 

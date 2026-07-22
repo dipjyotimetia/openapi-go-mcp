@@ -123,8 +123,50 @@ paths:
 		t.Errorf("auth helper should call runtime.ApplyBearer")
 	}
 	// The operation block invokes the helper.
-	if !strings.Contains(src, "applyAuthBearerAuth(httpReq)") {
-		t.Errorf("operation should invoke applyAuthBearerAuth")
+	if !strings.Contains(src, "applyAuthForGetThingWithResponse(httpReq)") {
+		t.Errorf("operation should invoke its operation security-policy helper")
+	}
+}
+
+func TestRender_ProxyMode_AuthAlternativesAreSelectedAtCallTime(t *testing.T) {
+	spec := []byte(`openapi: 3.0.0
+info: { title: AuthAlternatives, version: "1.0" }
+servers: [ { url: https://api.test } ]
+security:
+  - apiKey: []
+  - bearer: []
+components:
+  securitySchemes:
+    apiKey: { type: apiKey, in: header, name: X-API-Key }
+    bearer: { type: http, scheme: bearer }
+paths:
+  /thing:
+    get:
+      operationId: getThing
+      responses: { "200": { description: ok } }
+`)
+	tmp := filepath.Join(t.TempDir(), "spec.yaml")
+	if err := os.WriteFile(tmp, spec, 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+	doc, err := loader.Load(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, err := Render(doc, Options{Mode: ModeProxy, PackageName: "authaltsmcp", ModulePath: "example.com/authalts"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	src := string(got)
+	for _, want := range []string{
+		"func applyAuthForGetThingWithResponse(req *http.Request) error",
+		"if hasAuthApiKey() {",
+		"if hasAuthBearer() {",
+		"runtime.UnsatisfiedSecurityError",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("generated proxy must preserve auth alternatives; missing %q\n%s", want, prefix(got, 2600))
+		}
 	}
 }
 

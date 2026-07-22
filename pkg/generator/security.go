@@ -215,7 +215,17 @@ func deriveEnvVar(name string) string {
 	return s
 }
 
-// ResolveOperationSecurity returns the security schemes that apply to one
+// SecurityPolicy is the proxy-mode authentication contract for one operation.
+// Alternatives preserves OpenAPI's outer OR semantics; each inner slice is
+// an AND requirement. Required remains true when the source declared security
+// but no supported alternative could be produced, ensuring callers fail closed.
+type SecurityPolicy struct {
+	Alternatives [][]SecurityScheme
+	Anonymous    bool
+	Required     bool
+}
+
+// ResolveSecurityPolicy returns the security policy that applies to one
 // operation. OpenAPI precedence: an operation-level `security` (even if
 // empty []) overrides the document-level `security`; a missing
 // op.Security falls back to doc.Security.
@@ -226,29 +236,24 @@ func deriveEnvVar(name string) string {
 // to skip auth entirely.
 //
 // Within a non-empty requirement list, OpenAPI says "either of these
-// requirements is sufficient". Proxy mode picks the first requirement
-// that references only schemes we successfully parsed — anything else
-// would require user code at runtime to choose. This is documented in
-// design-decisions §14.
-func ResolveOperationSecurity(op *openapi3.Operation, doc *openapi3.T, parsed []SecurityScheme) (schemes []SecurityScheme, anonymous bool) {
+// requirements is sufficient". Every fully supported alternative is retained
+// so generated code can choose based on credentials available at call time.
+func ResolveSecurityPolicy(op *openapi3.Operation, doc *openapi3.T, parsed []SecurityScheme) SecurityPolicy {
 	reqs := operationSecurityRequirements(op, doc)
 	if reqs == nil {
-		// No security at either level → effectively anonymous, but
-		// distinct from an explicit `security: []` — callers may still
-		// log a "no auth declared" advisory. We surface it the same way:
-		// no schemes, anonymous=true.
-		return nil, true
+		return SecurityPolicy{Anonymous: true}
 	}
 
 	byName := make(map[string]SecurityScheme, len(parsed))
 	for _, s := range parsed {
 		byName[s.Name] = s
 	}
+	policy := SecurityPolicy{Required: true}
 
 	for _, req := range *reqs {
 		if len(req) == 0 {
 			// Empty SecurityRequirement object means anonymous.
-			return nil, true
+			return SecurityPolicy{Anonymous: true}
 		}
 		picked := make([]SecurityScheme, 0, len(req))
 		complete := true
@@ -266,13 +271,22 @@ func ResolveOperationSecurity(op *openapi3.Operation, doc *openapi3.T, parsed []
 			picked = append(picked, s)
 		}
 		if complete {
-			return picked, false
+			policy.Alternatives = append(policy.Alternatives, picked)
 		}
 	}
-	// No requirement could be fully satisfied. Fall back to anonymous so
-	// the proxy still generates a callable handler — the upstream will
-	// 401 and the user will see a real error rather than silent failure.
-	return nil, true
+	return policy
+}
+
+// ResolveOperationSecurity is retained for callers compiled against the
+// pre-v1.0 generator API. It returns the first supported alternative; proxy
+// generation itself uses ResolveSecurityPolicy and therefore preserves all
+// alternatives at runtime.
+func ResolveOperationSecurity(op *openapi3.Operation, doc *openapi3.T, parsed []SecurityScheme) ([]SecurityScheme, bool) {
+	policy := ResolveSecurityPolicy(op, doc, parsed)
+	if len(policy.Alternatives) == 0 {
+		return nil, policy.Anonymous
+	}
+	return policy.Alternatives[0], policy.Anonymous
 }
 
 // operationSecurityRequirements returns the effective SecurityRequirements

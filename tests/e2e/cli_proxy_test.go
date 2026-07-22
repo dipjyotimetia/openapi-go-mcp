@@ -366,6 +366,74 @@ paths:
 	}
 }
 
+func TestCLI_Proxy_SecurityORSelectsConfiguredAlternative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build-and-run e2e in -short mode")
+	}
+	h := newProxyHarness(t, nil)
+	defer h.close()
+	spec := `openapi: 3.0.0
+info: { title: AuthOR, version: "1.0" }
+servers: [ { url: "` + h.upstreamURL + `" } ]
+security:
+  - apiKey: []
+  - bearer: []
+components:
+  securitySchemes:
+    apiKey: { type: apiKey, in: header, name: X-API-Key }
+    bearer: { type: http, scheme: bearer }
+paths:
+  /thing:
+    get:
+      operationId: getThing
+      responses: { "200": { description: ok } }
+`
+	resp := runProxyToolCall(t, spec, []string{"BEARER_TOKEN_BEARER=chosen-token"}, []string{
+		initRequest,
+		toolCallRequest(2, "getThing", "{}"),
+	})
+	if strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("tool call unexpectedly failed: %s", resp)
+	}
+	if got := h.captured(); got == nil {
+		t.Fatal("expected configured security alternative to reach upstream")
+	} else if got.Header.Get("Authorization") != "Bearer chosen-token" {
+		t.Errorf("Authorization = %q, want bearer alternative", got.Header.Get("Authorization"))
+	}
+}
+
+func TestCLI_Proxy_UnsupportedDeclaredSecurityFailsClosed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build-and-run e2e in -short mode")
+	}
+	h := newProxyHarness(t, nil)
+	defer h.close()
+	spec := `openapi: 3.0.0
+info: { title: AuthFailClosed, version: "1.0" }
+servers: [ { url: "` + h.upstreamURL + `" } ]
+security:
+  - digest: []
+components:
+  securitySchemes:
+    digest: { type: http, scheme: digest }
+paths:
+  /thing:
+    get:
+      operationId: getThing
+      responses: { "200": { description: ok } }
+`
+	resp := runProxyToolCall(t, spec, nil, []string{
+		initRequest,
+		toolCallRequest(2, "getThing", "{}"),
+	})
+	if !strings.Contains(resp, "no configured credential satisfies declared security") {
+		t.Fatalf("expected fail-closed security error, got %s", resp)
+	}
+	if got := h.captured(); got != nil {
+		t.Fatalf("unsupported declared security must not reach upstream, got %s %s", got.Method, got.URL)
+	}
+}
+
 // authSpec builds a minimal OpenAPI 3 doc whose single operation is
 // protected by the named security scheme and whose servers[0].url points
 // at upstreamURL. schemeBody is the literal YAML under

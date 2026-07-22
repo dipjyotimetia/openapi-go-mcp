@@ -143,16 +143,19 @@ type Operation struct {
 	// only — error results (IsError=true) carry the runtime's
 	// {"status","headers","body"} envelope instead.
 	OutputSchemaJSON string
-	// Security lists the security schemes the proxy template should
-	// apply to this operation. Populated only in ModeProxy; companion
-	// mode leaves the slice nil. Empty + Anonymous=true means "no auth";
-	// nil + Anonymous=false should not occur.
-	Security []SecurityScheme
+	// Security lists the OpenAPI security alternatives (OR) and schemes
+	// within each alternative (AND) the proxy must satisfy. It is populated
+	// only in ModeProxy; companion mode leaves it nil.
+	Security [][]SecurityScheme
 	// Anonymous is true when the operation is explicitly callable without
 	// credentials (operation-level `security: [{}]` or no security
 	// declared anywhere). Proxy template uses this to skip auth wiring
 	// entirely rather than producing a "credential not set" error.
 	Anonymous bool
+	// AuthRequired distinguishes an absent/explicitly anonymous security
+	// declaration from a protected operation whose declared schemes could not
+	// be lowered. The latter must fail closed at call time.
+	AuthRequired bool
 }
 
 // ParamField is a single OpenAPI parameter described enough to render Go code
@@ -247,7 +250,10 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 				return nil, sink.finalize(), fmt.Errorf("%s %s: %w", method, path, err)
 			}
 			if opts.Mode == ModeProxy {
-				op.Security, op.Anonymous = ResolveOperationSecurity(specOp, doc, parsedSchemes)
+				policy := ResolveSecurityPolicy(specOp, doc, parsedSchemes)
+				op.Security = policy.Alternatives
+				op.Anonymous = policy.Anonymous
+				op.AuthRequired = policy.Required
 			}
 			ops = append(ops, op)
 		}

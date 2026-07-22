@@ -283,3 +283,37 @@ func TestResolveOperationSecurity_DeterministicOrderWithinRequirement(t *testing
 		t.Errorf("expected alphabetic order within a requirement; got %v", names)
 	}
 }
+
+func TestResolveSecurityPolicy_PreservesORAlternativesAndFailsClosed(t *testing.T) {
+	parsed := []SecurityScheme{
+		{Name: "apiKey", Kind: SecurityAPIKey, EnvVar: "API_KEY"},
+		{Name: "bearer", Kind: SecurityHTTPBearer, EnvVar: "BEARER_TOKEN"},
+	}
+	reqs := openapi3.SecurityRequirements{
+		openapi3.SecurityRequirement{"apiKey": {}},
+		openapi3.SecurityRequirement{"bearer": {}},
+	}
+
+	policy := ResolveSecurityPolicy(&openapi3.Operation{Security: &reqs}, &openapi3.T{}, parsed)
+	if policy.Anonymous {
+		t.Fatal("declared alternatives must not be treated as anonymous")
+	}
+	if !policy.Required {
+		t.Fatal("declared security must remain required even when no credential is configured")
+	}
+	if len(policy.Alternatives) != 2 {
+		t.Fatalf("alternatives = %d, want 2", len(policy.Alternatives))
+	}
+	if got := policy.Alternatives[0][0].Name; got != "apiKey" {
+		t.Errorf("first alternative = %q, want apiKey", got)
+	}
+	if got := policy.Alternatives[1][0].Name; got != "bearer" {
+		t.Errorf("second alternative = %q, want bearer", got)
+	}
+
+	unsupportedReqs := openapi3.SecurityRequirements{openapi3.SecurityRequirement{"unparsed": {}}}
+	unsupported := ResolveSecurityPolicy(&openapi3.Operation{Security: &unsupportedReqs}, &openapi3.T{}, parsed)
+	if unsupported.Anonymous || !unsupported.Required || len(unsupported.Alternatives) != 0 {
+		t.Errorf("unsupported declared security must fail closed: %+v", unsupported)
+	}
+}
