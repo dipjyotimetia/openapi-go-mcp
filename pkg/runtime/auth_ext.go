@@ -73,6 +73,12 @@ type ClientCredentialsConfig struct {
 	Scopes               []string
 	AdditionalParameters url.Values
 	HTTPClient           *http.Client
+	// AllowInsecureHTTP permits a cleartext token endpoint. It is intended
+	// only for local test environments; production callers must use HTTPS.
+	AllowInsecureHTTP bool
+	// TokenTimeout bounds token acquisition when the supplied HTTP client has
+	// no timeout. Zero defaults to 15 seconds.
+	TokenTimeout time.Duration
 	// RefreshSkew causes a cached token to be refreshed before expiry. Zero
 	// defaults to 30 seconds. It must not be negative.
 	RefreshSkew time.Duration
@@ -89,9 +95,11 @@ type ClientCredentialsProvider struct {
 	client *http.Client
 	now    func() time.Time
 
-	mu     sync.Mutex
-	token  string
-	expiry time.Time
+	mu          sync.Mutex
+	token       string
+	expiry      time.Time
+	refreshing  bool
+	refreshDone chan struct{}
 }
 
 // NewClientCredentialsProvider validates cfg and returns a reusable provider.
@@ -102,6 +110,9 @@ func NewClientCredentialsProvider(cfg ClientCredentialsConfig) (*ClientCredentia
 	u, err := url.Parse(cfg.TokenURL)
 	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return nil, fmt.Errorf("OAuth client credentials token URL must be an absolute http(s) URL")
+	}
+	if u.Scheme != "https" && !cfg.AllowInsecureHTTP {
+		return nil, fmt.Errorf("OAuth client credentials token URL must use HTTPS (set AllowInsecureHTTP only for local testing)")
 	}
 	if cfg.ClientID == "" {
 		return nil, fmt.Errorf("OAuth client credentials client ID is required")
@@ -115,10 +126,17 @@ func NewClientCredentialsProvider(cfg ClientCredentialsConfig) (*ClientCredentia
 	if cfg.RefreshSkew == 0 {
 		cfg.RefreshSkew = 30 * time.Second
 	}
+	if cfg.TokenTimeout < 0 {
+		return nil, fmt.Errorf("OAuth client credentials token timeout must not be negative")
+	}
+	if cfg.TokenTimeout == 0 {
+		cfg.TokenTimeout = 15 * time.Second
+	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
+	client = cloneTokenHTTPClient(client, cfg.TokenTimeout)
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -145,12 +163,44 @@ func (p *ClientCredentialsProvider) Apply(ctx context.Context, req *http.Request
 }
 
 func (p *ClientCredentialsProvider) tokenFor(ctx context.Context) (string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.token != "" && !p.expiry.IsZero() && p.now().Before(p.expiry.Add(-p.config.RefreshSkew)) {
-		return p.token, nil
-	}
+	for {
+		p.mu.Lock()
+		if p.token != "" && !p.expiry.IsZero() && p.now().Before(p.expiry.Add(-p.config.RefreshSkew)) {
+			token := p.token
+			p.mu.Unlock()
+			return token, nil
+		}
+		if p.refreshing {
+			done := p.refreshDone
+			p.mu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		p.refreshing = true
+		p.refreshDone = make(chan struct{})
+		p.mu.Unlock()
 
+		token, expiry, err := p.fetchToken(ctx)
+		p.mu.Lock()
+		if err == nil {
+			p.token = token
+			p.expiry = expiry
+		}
+		p.refreshing = false
+		close(p.refreshDone)
+		p.mu.Unlock()
+		if err != nil {
+			return "", err
+		}
+		return token, nil
+	}
+}
+
+func (p *ClientCredentialsProvider) fetchToken(ctx context.Context) (string, time.Time, error) {
 	form := make(url.Values, len(p.config.AdditionalParameters)+2)
 	for key, values := range p.config.AdditionalParameters {
 		form[key] = append([]string(nil), values...)
@@ -161,7 +211,7 @@ func (p *ClientCredentialsProvider) tokenFor(ctx context.Context) (string, error
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.config.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("create OAuth token request: %w", err)
+		return "", time.Time{}, fmt.Errorf("create OAuth token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -169,14 +219,14 @@ func (p *ClientCredentialsProvider) tokenFor(ctx context.Context) (string, error
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request OAuth token: %w", err)
+		return "", time.Time{}, fmt.Errorf("request OAuth token: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		// Do not return the response body: identity providers can include
 		// diagnostics or echoed details that should not reach MCP clients.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return "", fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
+		return "", time.Time{}, fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
 	}
 
 	var payload struct {
@@ -185,23 +235,36 @@ func (p *ClientCredentialsProvider) tokenFor(ctx context.Context) (string, error
 		ExpiresIn   int64  `json:"expires_in"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return "", fmt.Errorf("decode OAuth token response: %w", err)
+		return "", time.Time{}, fmt.Errorf("decode OAuth token response: %w", err)
 	}
 	if payload.AccessToken == "" {
-		return "", fmt.Errorf("OAuth token response did not contain an access_token")
+		return "", time.Time{}, fmt.Errorf("OAuth token response did not contain an access_token")
 	}
 	if payload.TokenType != "" && !strings.EqualFold(payload.TokenType, "bearer") {
-		return "", fmt.Errorf("OAuth token response has unsupported token_type %q", payload.TokenType)
+		return "", time.Time{}, fmt.Errorf("OAuth token response has unsupported token_type %q", payload.TokenType)
 	}
+	expiry := time.Time{}
 	if payload.ExpiresIn > 0 {
-		p.expiry = p.now().Add(time.Duration(payload.ExpiresIn) * time.Second)
-	} else {
-		// A missing expiry cannot safely be cached: obtain a fresh token on
-		// the next call rather than risk using a revoked credential.
-		p.expiry = time.Time{}
+		const maxDurationSeconds = int64(^uint64(0)>>1) / int64(time.Second)
+		if payload.ExpiresIn > maxDurationSeconds {
+			return "", time.Time{}, fmt.Errorf("OAuth token response expires_in is too large")
+		}
+		expiry = p.now().Add(time.Duration(payload.ExpiresIn) * time.Second)
 	}
-	p.token = payload.AccessToken
-	return p.token, nil
+	// A missing expiry cannot safely be cached: obtain a fresh token on the
+	// next call rather than risk using a revoked credential.
+	return payload.AccessToken, expiry, nil
+}
+
+func cloneTokenHTTPClient(base *http.Client, timeout time.Duration) *http.Client {
+	clone := *base
+	if clone.Timeout == 0 {
+		clone.Timeout = timeout
+	}
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &clone
 }
 
 // MTLSConfig configures client-certificate authentication for an upstream
@@ -289,5 +352,8 @@ func HTTPClientWithMTLS(base *http.Client, cfg MTLSConfig) (*http.Client, error)
 	}
 	transport.TLSClientConfig = tlsConfig
 	client.Transport = transport
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	return client, nil
 }

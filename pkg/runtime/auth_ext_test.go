@@ -56,7 +56,7 @@ func TestApplyRequestAuth_RejectsNilProvider(t *testing.T) {
 
 func TestClientCredentialsProvider_CachesTokenUntilRefreshWindow(t *testing.T) {
 	var requests atomic.Int32
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if got, want := r.Method, http.MethodPost; got != want {
 			t.Errorf("method = %s, want %s", got, want)
@@ -83,6 +83,7 @@ func TestClientCredentialsProvider_CachesTokenUntilRefreshWindow(t *testing.T) {
 		TokenURL:     tokenServer.URL,
 		ClientID:     "client-id",
 		ClientSecret: "client-secret",
+		HTTPClient:   tokenServer.Client(),
 		Scopes:       []string{"read", "write"},
 		RefreshSkew:  30 * time.Second,
 		Now:          func() time.Time { return now },
@@ -115,14 +116,14 @@ func TestClientCredentialsProvider_CachesTokenUntilRefreshWindow(t *testing.T) {
 
 func TestClientCredentialsProvider_RejectsOAuthErrorWithoutLeakingBody(t *testing.T) {
 	t.Parallel()
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = fmt.Fprint(w, `{"error":"invalid_client","error_description":"secret diagnostic"}`)
 	}))
 	defer tokenServer.Close()
 
 	provider, err := NewClientCredentialsProvider(ClientCredentialsConfig{
-		TokenURL: tokenServer.URL, ClientID: "id", ClientSecret: "secret",
+		TokenURL: tokenServer.URL, ClientID: "id", ClientSecret: "secret", HTTPClient: tokenServer.Client(),
 	})
 	if err != nil {
 		t.Fatalf("NewClientCredentialsProvider: %v", err)
@@ -133,6 +134,43 @@ func TestClientCredentialsProvider_RejectsOAuthErrorWithoutLeakingBody(t *testin
 	}
 	if got := err.Error(); got == "" || strings.Contains(got, "secret diagnostic") {
 		t.Errorf("error should identify failure without response body: %q", got)
+	}
+}
+
+func TestClientCredentialsProvider_RejectsCleartextTokenEndpoint(t *testing.T) {
+	t.Parallel()
+	_, err := NewClientCredentialsProvider(ClientCredentialsConfig{
+		TokenURL: "http://127.0.0.1/token", ClientID: "id", ClientSecret: "secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("expected HTTPS requirement, got %v", err)
+	}
+}
+
+func TestClientCredentialsProvider_RejectsTokenRedirect(t *testing.T) {
+	var redirected atomic.Bool
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirected" {
+			redirected.Store(true)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/redirected", http.StatusFound)
+	}))
+	defer tokenServer.Close()
+
+	provider, err := NewClientCredentialsProvider(ClientCredentialsConfig{
+		TokenURL: tokenServer.URL, ClientID: "id", ClientSecret: "secret", HTTPClient: tokenServer.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = provider.Apply(context.Background(), newReq(t, "https://api.example.com/things"))
+	if err == nil || !strings.Contains(err.Error(), "HTTP 302") {
+		t.Fatalf("expected redirect rejection, got %v", err)
+	}
+	if redirected.Load() {
+		t.Fatal("token redirect was followed")
 	}
 }
 
