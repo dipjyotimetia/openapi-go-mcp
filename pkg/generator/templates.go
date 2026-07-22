@@ -10,6 +10,7 @@ package generator
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -23,7 +24,7 @@ const toolLiteralSrc = `s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
 			Name:           "{{.ToolName}}",
 			Description:    {{quote .Description}},
-			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
+			RawInputSchema: {{if $.ProviderAware}}inputSchemaForProvider(provider, {{schemaConst .ToolName}}, {{openAISchemaConst .ToolName}}){{else}}json.RawMessage({{schemaConst .ToolName}}){{end}},
 			{{- if .OutputSchemaJSON}}
 			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
 			{{- end}}
@@ -38,6 +39,7 @@ const toolLiteralSrc = `s.AddTool(
 // emits Go raw-string backticks.
 const schemaConstsSrc = "{{range .Ops}}\n" +
 	"const {{schemaConst .ToolName}} = `{{.InputSchemaJSON}}`\n" +
+	"{{if $.ProviderAware}}\nconst {{openAISchemaConst .ToolName}} = `{{.InputSchemaOpenAIJSON}}`\n{{end}}\n" +
 	"{{if .OutputSchemaJSON}}\n" +
 	"const {{outputSchemaConst .ToolName}} = `{{.OutputSchemaJSON}}`\n" +
 	"{{end}}\n{{end}}\n"
@@ -70,9 +72,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ {{.ClientAlias}}.{{.ClientType}} = ({{.ClientAlias}}.{{.ClientType}})(nil)
 
-// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// {{.RegisterFunc}} registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, opts ...runtime.Option) {
+	{{if .ProviderAware}}{{.RegisterFunc}}WithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// {{.RegisterFunc}}OpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func {{.RegisterFunc}}OpenAI(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, opts ...runtime.Option) {
+	{{.RegisterFunc}}WithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// {{.RegisterFunc}}WithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, provider runtime.LLMProvider, opts ...runtime.Option) {
+	{{end}}
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -170,6 +185,17 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+{{if .ProviderAware}}
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+{{end}}
+
 ` + schemaConstsSrc
 
 // fileTemplateProxy is the master template for proxy mode. It emits a
@@ -203,12 +229,26 @@ var _ = url.Values(nil)
 var _ = os.Getenv
 var _ = strings.ReplaceAll
 
-// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
+// {{.RegisterFunc}} registers every operation in the spec with the standard
+// MCP-compatible input schema.
 // Each tool proxies its arguments to the upstream HTTP service identified
 // by the API_BASE_URL environment variable (default: {{.BaseURLDefault}}),
 // applying authentication from environment variables derived from the
 // spec's securitySchemes. See README.md for the env-var table.
 func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
+	{{if .ProviderAware}}{{.RegisterFunc}}WithProvider(s, runtime.LLMProviderStandard, opts...)
+}
+
+// {{.RegisterFunc}}OpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func {{.RegisterFunc}}OpenAI(s runtime.MCPServer, opts ...runtime.Option) {
+	{{.RegisterFunc}}WithProvider(s, runtime.LLMProviderOpenAI, opts...)
+}
+
+// {{.RegisterFunc}}WithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProvider, opts ...runtime.Option) {
+	{{end}}
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -423,9 +463,20 @@ func applyAuthFor{{.GoName}}(req *http.Request) error {
 		{{end}}return nil
 	}
 {{end}}
-	return &runtime.UnsatisfiedSecurityError{Operation: {{quote (printf "%s %s" .Method .Path)}}}
+	return &runtime.UnsatisfiedSecurityError{Operation: {{quote (printf "%s %s" .Method .Path)}}, MissingEnvVars: {{securityEnvVarsLit .Security}}}
 }
 {{end}}{{end}}
+
+{{if .ProviderAware}}
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+{{end}}
 
 ` + schemaConstsSrc
 
@@ -435,6 +486,9 @@ func templateFuncs() template.FuncMap {
 		"quote": goQuote,
 		"schemaConst": func(toolName string) string {
 			return "input_" + safeIdent(toolName)
+		},
+		"openAISchemaConst": func(toolName string) string {
+			return "input_openai_" + safeIdent(toolName)
 		},
 		"outputSchemaConst": func(toolName string) string {
 			return "output_" + safeIdent(toolName)
@@ -453,7 +507,40 @@ func templateFuncs() template.FuncMap {
 		// generated function names: "bearerAuth" → "BearerAuth",
 		// "api-key" → "ApiKey".
 		"pascalCase": PascalCase,
+		"securityEnvVarsLit": securityEnvVarsLit,
 	}
+}
+
+// securityEnvVarsLit renders the stable, deduplicated environment-variable
+// names that could satisfy any security alternative. It makes a fail-closed
+// generated error actionable without exposing credential values.
+func securityEnvVarsLit(alternatives [][]SecurityScheme) string {
+	seen := map[string]struct{}{}
+	var vars []string
+	for _, alternative := range alternatives {
+		for _, scheme := range alternative {
+			if scheme.Kind == SecurityHTTPBasic {
+				seen[scheme.UsernameEnvVar] = struct{}{}
+				seen[scheme.PasswordEnvVar] = struct{}{}
+				continue
+			}
+			seen[scheme.EnvVar] = struct{}{}
+		}
+	}
+	for envVar := range seen {
+		if envVar != "" {
+			vars = append(vars, envVar)
+		}
+	}
+	sort.Strings(vars)
+	if len(vars) == 0 {
+		return "nil"
+	}
+	parts := make([]string, 0, len(vars))
+	for _, envVar := range vars {
+		parts = append(parts, strconv.Quote(envVar))
+	}
+	return "[]string{" + strings.Join(parts, ", ") + "}"
 }
 
 // annotationsLit renders op.Annotations (computed by toolAnnotations in

@@ -239,6 +239,15 @@ func TestResolveOperationSecurity_EmptyOpSecurityIsAnonymous(t *testing.T) {
 	}
 }
 
+func TestResolveSecurityPolicy_EmptySecurityListIsAnonymous(t *testing.T) {
+	doc := &openapi3.T{Security: openapi3.SecurityRequirements{openapi3.SecurityRequirement{"docBearer": {}}}}
+	empty := openapi3.SecurityRequirements{}
+	policy := ResolveSecurityPolicy(&openapi3.Operation{Security: &empty}, doc, []SecurityScheme{{Name: "docBearer"}})
+	if !policy.Anonymous || policy.Required || len(policy.Alternatives) != 0 {
+		t.Errorf("security: [] must override global auth as anonymous, got %+v", policy)
+	}
+}
+
 func TestResolveOperationSecurity_NoSecurityAnywhereIsAnonymous(t *testing.T) {
 	got, anon := ResolveOperationSecurity(&openapi3.Operation{}, &openapi3.T{}, nil)
 	if !anon || got != nil {

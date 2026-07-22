@@ -152,6 +152,7 @@ func renderWithOps(doc *openapi3.T, opts Options) ([]byte, []Operation, []Diagno
 		ExtraImports:   extraImports,
 		BaseURLDefault: baseDefault,
 		AllSchemes:     allSchemes,
+		ProviderAware:  !opts.OpenAICompat,
 	}
 
 	tmpl, err := template.New("mcp").Funcs(templateFuncs()).Parse(tmplSrc)
@@ -281,6 +282,7 @@ var reservedClientAliases = map[string]struct{}{
 func validateNoSchemaConstCollisions(ops []Operation) error {
 	seenToolNames := make(map[string]struct{}, len(ops))
 	seenConsts := make(map[string]string, len(ops))
+	seenAuthHelpers := make(map[string]string, len(ops))
 	for _, op := range ops {
 		if _, dup := seenToolNames[op.ToolName]; dup {
 			return fmt.Errorf("duplicate tool name %q after normalization; rename one operation to disambiguate", op.ToolName)
@@ -292,6 +294,13 @@ func validateNoSchemaConstCollisions(ops []Operation) error {
 			return fmt.Errorf("tool names %q and %q both mangle to const %q; rename one operation to disambiguate", prev, op.ToolName, c)
 		}
 		seenConsts[c] = op.ToolName
+
+		if op.AuthRequired {
+			if previous, dup := seenAuthHelpers[op.GoName]; dup {
+				return fmt.Errorf("operations %q and %q generate the same auth helper %q; rename one operationId", previous, op.ToolName, "applyAuthFor"+op.GoName)
+			}
+			seenAuthHelpers[op.GoName] = op.ToolName
+		}
 	}
 	return nil
 }
@@ -317,6 +326,9 @@ type templateView struct {
 	// any operation; only populated in ModeProxy. The proxy template emits
 	// one apply<Scheme>Auth helper per entry.
 	AllSchemes []SecurityScheme
+	// ProviderAware emits standard and OpenAI registration paths together.
+	// Explicit OpenAICompat preserves the pre-provider API shape.
+	ProviderAware bool
 }
 
 // collectExtraImports walks every path parameter in ops and returns the sorted,

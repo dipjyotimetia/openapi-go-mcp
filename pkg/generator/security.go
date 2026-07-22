@@ -243,6 +243,11 @@ func ResolveSecurityPolicy(op *openapi3.Operation, doc *openapi3.T, parsed []Sec
 	if reqs == nil {
 		return SecurityPolicy{Anonymous: true}
 	}
+	// An explicitly empty security array overrides any document-level
+	// requirement and means the operation can be invoked anonymously.
+	if len(*reqs) == 0 {
+		return SecurityPolicy{Anonymous: true}
+	}
 
 	byName := make(map[string]SecurityScheme, len(parsed))
 	for _, s := range parsed {
