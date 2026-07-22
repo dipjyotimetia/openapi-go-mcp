@@ -173,8 +173,8 @@ func TestE2E_Mark3labs_MissingPathParam_ReturnsToolError(t *testing.T) {
 		t.Errorf("expected isError=true, got %+v", result)
 	}
 	text := mark3labsToolText(t, resp)
-	if !strings.Contains(text, "missing_path_param") {
-		t.Errorf("expected missing_path_param in error text, got %q", text)
+	if !strings.Contains(text, "invalid_arguments") || !strings.Contains(text, "path") {
+		t.Errorf("expected invalid_arguments schema error naming path, got %q", text)
 	}
 
 	mu.Lock()

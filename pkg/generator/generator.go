@@ -49,6 +49,11 @@ type Options struct {
 	// Valid: "gosdk" (default) or "mark3labs". Only consulted when
 	// Mode == ModeProxy; companion mode is SDK-agnostic.
 	SDK string
+	// RuntimeVersion pins the generated proxy scaffold to this version of the
+	// openapi-go-mcp runtime. It is normally populated by the CLI from its
+	// release metadata. Development builds must supply it explicitly when the
+	// build information does not contain a resolvable module version.
+	RuntimeVersion string
 	// OutDir is the directory where the generated *.mcp.go file is written.
 	OutDir string
 	// PackageName is the Go package name for the generated file. If empty,

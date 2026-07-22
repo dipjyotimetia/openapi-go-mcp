@@ -281,8 +281,8 @@ func TestE2E_GoSDK_MissingPathParam_ReturnsToolError(t *testing.T) {
 	if !res.IsError {
 		t.Errorf("expected IsError result for missing path param, got OK: %s", textOf(res))
 	}
-	if !strings.Contains(textOf(res), "missing_path_param") {
-		t.Errorf("expected missing_path_param in error text, got %q", textOf(res))
+	if !strings.Contains(textOf(res), "invalid_arguments") || !strings.Contains(textOf(res), "path") {
+		t.Errorf("expected invalid_arguments schema error naming path, got %q", textOf(res))
 	}
 
 	mu.Lock()

@@ -42,8 +42,7 @@ var mcpSDKDeps = map[string]struct {
 }
 
 // ScaffoldOverrides lets callers (mainly tests) tweak fields the generator
-// would otherwise derive from build-time metadata. None of these fields
-// are exposed via the CLI — the CLI uses the defaults.
+// would otherwise derive from build-time metadata.
 type ScaffoldOverrides struct {
 	// RuntimeVersion overrides the version this scaffold's go.mod will
 	// pin its dependency on the openapi-go-mcp runtime to. Empty =
@@ -75,7 +74,9 @@ type ScaffoldOverrides struct {
 // The function is robust against an empty schemes slice (an anonymous
 // API): the README simply notes "no authentication required".
 func WriteScaffold(opts Options, doc *openapi3.T, schemes []SecurityScheme) error {
-	return WriteScaffoldWithOverrides(opts, doc, schemes, ScaffoldOverrides{})
+	return WriteScaffoldWithOverrides(opts, doc, schemes, ScaffoldOverrides{
+		RuntimeVersion: opts.RuntimeVersion,
+	})
 }
 
 // WriteScaffoldWithOverrides is WriteScaffold with the override knobs

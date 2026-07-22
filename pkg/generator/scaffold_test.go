@@ -234,6 +234,33 @@ func TestWriteScaffold_RejectsDevelopmentBuildWithoutOverride(t *testing.T) {
 	}
 }
 
+func TestWriteScaffold_UsesOptionsRuntimeVersionForDevelopmentBuild(t *testing.T) {
+	originalReadBuildInfo := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
+	}
+	t.Cleanup(func() { readBuildInfo = originalReadBuildInfo })
+
+	out := t.TempDir()
+	err := WriteScaffold(Options{
+		Mode:           ModeProxy,
+		OutDir:         out,
+		PackageName:    "petmcp",
+		ModulePath:     "example.com/petmcp",
+		RuntimeVersion: "v1.2.3",
+	}, newScaffoldDoc("Petstore"), nil)
+	if err != nil {
+		t.Fatalf("WriteScaffold: %v", err)
+	}
+	goMod, err := os.ReadFile(filepath.Join(out, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(goMod), "github.com/dipjyotimetia/openapi-go-mcp v1.2.3") {
+		t.Fatalf("go.mod did not use Options.RuntimeVersion:\n%s", goMod)
+	}
+}
+
 func TestRuntimeVersionForScaffold_RejectsUnresolvedBuildVersion(t *testing.T) {
 	_, err := runtimeVersionForScaffold(ScaffoldOverrides{}, "(devel)")
 	if err == nil || !strings.Contains(err.Error(), "RuntimeVersion") {
