@@ -238,19 +238,35 @@ const input_openai_findPets = `{
         "limit": {
           "description": "maximum number of results to return",
           "format": "int32",
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "tags": {
           "description": "tags to filter by",
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "required": [
+        "limit",
+        "tags"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
+  "required": [
+    "query"
+  ],
   "type": "object"
 }`
 
@@ -296,11 +312,15 @@ const input_openai_addPet = `{
         },
         "tag": {
           "description": "Type of the pet",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "name"
+        "name",
+        "tag"
       ],
       "type": "object"
     }

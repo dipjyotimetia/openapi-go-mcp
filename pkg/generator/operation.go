@@ -1069,7 +1069,7 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		root["required"] = required
 	}
 	if conv.OpenAICompat {
-		root["additionalProperties"] = false
+		enforceOpenAIStrictObjects(root)
 	}
 	if defs := conv.Defs(); len(defs) > 0 {
 		root["$defs"] = defs
@@ -1080,6 +1080,75 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		return "", nil, fmt.Errorf("marshal input schema: %w", err)
 	}
 	return string(buf), fileFields, nil
+}
+
+// enforceOpenAIStrictObjects applies the constraints OpenAI's strict tool
+// schema dialect imposes beyond ordinary JSON Schema: every declared object
+// property must be listed in required and objects must reject undeclared
+// properties. OpenAPI optional properties remain optional in meaning by being
+// made nullable, which lets a strict caller send null as the absence marker.
+//
+// It runs after the complete input envelope has been assembled so it covers
+// both converted OpenAPI schemas and synthetic path/query/header groups.
+func enforceOpenAIStrictObjects(node any) {
+	switch value := node.(type) {
+	case map[string]any:
+		props, hasProps := value["properties"].(map[string]any)
+		if hasProps {
+			required := requiredPropertyNames(value["required"])
+			names := make([]string, 0, len(props))
+			for name := range props {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				if !required[name] {
+					makeSchemaNullable(props[name])
+					required[name] = true
+				}
+			}
+			value["required"] = names
+			value["additionalProperties"] = false
+		}
+		for _, child := range value {
+			enforceOpenAIStrictObjects(child)
+		}
+	case []any:
+		for _, child := range value {
+			enforceOpenAIStrictObjects(child)
+		}
+	}
+}
+
+func requiredPropertyNames(raw any) map[string]bool {
+	set := map[string]bool{}
+	names, _ := raw.([]any)
+	for _, name := range names {
+		if s, ok := name.(string); ok {
+			set[s] = true
+		}
+	}
+	return set
+}
+
+func makeSchemaNullable(raw any) {
+	schema, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	switch typ := schema["type"].(type) {
+	case string:
+		if typ != "null" {
+			schema["type"] = []any{typ, "null"}
+		}
+	case []any:
+		for _, candidate := range typ {
+			if candidate == "null" {
+				return
+			}
+		}
+		schema["type"] = append(typ, "null")
+	}
 }
 
 // mergeParamMetadata copies Parameter-object-level description / example /

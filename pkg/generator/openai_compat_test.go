@@ -27,6 +27,8 @@ import (
 //  1. no $ref anywhere — schemas must be self-contained
 //  2. no oneOf/anyOf/allOf — composition is flattened
 //  3. every object has additionalProperties: false
+//  4. every declared object property is required; OpenAPI-optional fields
+//     are nullable so callers can use null as the absence marker
 //
 // The fixtures together cover:
 //   - object schemas, refs, query/path params, JSON request body (petstore)
@@ -84,12 +86,71 @@ func TestRender_OpenAICompat(t *testing.T) {
 								t.Errorf("%s: object schema must have additionalProperties:false, got %v",
 									path, m["additionalProperties"])
 							}
+							assertAllPropertiesRequired(t, path, m)
 						}
 					})
 				})
 			}
 		})
 	}
+}
+
+func assertAllPropertiesRequired(t *testing.T, path string, schema map[string]any) {
+	t.Helper()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return
+	}
+	required := requiredPropertyNames(schema["required"])
+	for name := range props {
+		if !required[name] {
+			t.Errorf("%s: property %q must be required in an OpenAI-compat schema", path, name)
+		}
+	}
+}
+
+func TestRender_OpenAICompat_MakesOptionalFieldsNullable(t *testing.T) {
+	doc, err := loader.Load(context.Background(), filepath.Join("..", "..", "testdata", "petstore-v3.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops, _, err := CollectOperations(doc, Options{OpenAICompat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range ops {
+		if op.ToolName != "findPets" {
+			continue
+		}
+		var schema map[string]any
+		if err := json.Unmarshal([]byte(op.InputSchemaJSON), &schema); err != nil {
+			t.Fatal(err)
+		}
+		query := schema["properties"].(map[string]any)["query"].(map[string]any)
+		if !containsJSONType(query["type"], "null") {
+			t.Fatalf("optional query group must be nullable, got %#v", query["type"])
+		}
+		limit := query["properties"].(map[string]any)["limit"].(map[string]any)
+		if !containsJSONType(limit["type"], "null") {
+			t.Fatalf("optional query parameter must be nullable, got %#v", limit["type"])
+		}
+		return
+	}
+	t.Fatal("findPets operation not found")
+}
+
+func containsJSONType(raw any, want string) bool {
+	switch types := raw.(type) {
+	case string:
+		return types == want
+	case []any:
+		for _, typ := range types {
+			if typ == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractInputSchemas(src string) map[string]string {
