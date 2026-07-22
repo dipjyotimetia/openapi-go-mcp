@@ -272,18 +272,24 @@ var reservedClientAliases = map[string]struct{}{
 	"uintptr":    {},
 }
 
-// validateNoSchemaConstCollisions ensures every tool's safeIdent-mangled
-// const name is unique. Two operations whose ToolName mangles to the same
-// identifier (e.g. "get-pet" and "get_pet" both → "get_pet") would emit
-// duplicate const declarations; reject this at codegen time.
+// validateNoSchemaConstCollisions ensures every emitted tool name and schema
+// const name is unique. ToolName normalizes operation IDs before this point,
+// so this also catches distinct source names that normalize to one portable
+// name (for example, "get.pet" and "get_pet").
 func validateNoSchemaConstCollisions(ops []Operation) error {
-	seen := make(map[string]string, len(ops))
+	seenToolNames := make(map[string]struct{}, len(ops))
+	seenConsts := make(map[string]string, len(ops))
 	for _, op := range ops {
-		c := "input_" + safeIdent(op.ToolName)
-		if prev, dup := seen[c]; dup && prev != op.ToolName {
-			return fmt.Errorf("tool names %q and %q both mangle to const %q; rename one operation or pass a -name-prefix to disambiguate", prev, op.ToolName, c)
+		if _, dup := seenToolNames[op.ToolName]; dup {
+			return fmt.Errorf("duplicate tool name %q after normalization; rename one operation to disambiguate", op.ToolName)
 		}
-		seen[c] = op.ToolName
+		seenToolNames[op.ToolName] = struct{}{}
+
+		c := "input_" + safeIdent(op.ToolName)
+		if prev, dup := seenConsts[c]; dup {
+			return fmt.Errorf("tool names %q and %q both mangle to const %q; rename one operation to disambiguate", prev, op.ToolName, c)
+		}
+		seenConsts[c] = op.ToolName
 	}
 	return nil
 }

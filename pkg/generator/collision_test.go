@@ -26,6 +26,40 @@ func TestRender_RejectsClientAliasReservedWord(t *testing.T) {
 	}
 }
 
+func TestRender_RejectsDuplicateToolNamesAfterNormalization(t *testing.T) {
+	ops := []Operation{
+		{ToolName: ToolName("get.pet", "", ""), InputSchemaJSON: "{}"},
+		{ToolName: ToolName("get_pet", "", ""), InputSchemaJSON: "{}"},
+	}
+	if err := validateNoSchemaConstCollisions(ops); err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Fatalf("expected normalized-name collision error, got %v", err)
+	}
+}
+
+func TestRender_RejectsOperationIDsThatNormalizeToTheSameToolName(t *testing.T) {
+	doc := &openapi3.T{
+		OpenAPI: "3.0.0",
+		Info:    &openapi3.Info{Title: "Coll", Version: "1"},
+		Paths:   &openapi3.Paths{},
+	}
+	doc.Paths.Set("/dotted", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "get.pet",
+		Responses:   newOKResponses(),
+	}})
+	doc.Paths.Set("/underscored", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "get_pet",
+		Responses:   newOKResponses(),
+	}})
+	if err := doc.Validate(context.Background()); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	_, err := Render(doc, Options{ClientImport: "example.com/foo/client"})
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Fatalf("expected normalized-name collision error, got %v", err)
+	}
+}
+
 func TestRender_RejectsClientAliasStdlibClash(t *testing.T) {
 	doc := minimalDoc(t)
 	for _, clash := range []string{"context", "json", "runtime"} {
