@@ -110,6 +110,19 @@ func TestRender_RejectsDuplicateGeneratedAuthHelperNames(t *testing.T) {
 	}
 }
 
+func TestRender_RejectsSecuritySchemeHelperCollisions(t *testing.T) {
+	ops := []Operation{{
+		ToolName: "get-pet",
+		Security: [][]SecurityScheme{{
+			{Name: "api-key"},
+			{Name: "api_key"},
+		}},
+	}}
+	if err := validateNoSchemaConstCollisions(ops); err == nil || !strings.Contains(err.Error(), "auth helper") {
+		t.Fatalf("expected security-helper collision error, got %v", err)
+	}
+}
+
 func TestRender_CallArgsErrorPropagates(t *testing.T) {
 	// A typed body with an invented BodyKind exercises the new error path
 	// callArgs returns instead of the old panic.

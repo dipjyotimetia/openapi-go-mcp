@@ -283,6 +283,14 @@ func validateNoSchemaConstCollisions(ops []Operation) error {
 	seenToolNames := make(map[string]struct{}, len(ops))
 	seenConsts := make(map[string]string, len(ops))
 	seenAuthHelpers := make(map[string]string, len(ops))
+	seenSecuritySchemes := make(map[string]struct{})
+	registerAuthHelper := func(name, source, kind string) error {
+		if previous, dup := seenAuthHelpers[name]; dup && previous != source {
+			return fmt.Errorf("%s %q and %q generate the same auth helper %q; rename one security scheme or operationId", kind, previous, source, name)
+		}
+		seenAuthHelpers[name] = source
+		return nil
+	}
 	for _, op := range ops {
 		if _, dup := seenToolNames[op.ToolName]; dup {
 			return fmt.Errorf("duplicate tool name %q after normalization; rename one operation to disambiguate", op.ToolName)
@@ -295,11 +303,26 @@ func validateNoSchemaConstCollisions(ops []Operation) error {
 		}
 		seenConsts[c] = op.ToolName
 
-		if op.AuthRequired {
-			if previous, dup := seenAuthHelpers[op.GoName]; dup {
-				return fmt.Errorf("operations %q and %q generate the same auth helper %q; rename one operationId", previous, op.ToolName, "applyAuthFor"+op.GoName)
+		for _, alternative := range op.Security {
+			for _, scheme := range alternative {
+				if _, seen := seenSecuritySchemes[scheme.Name]; seen {
+					continue
+				}
+				seenSecuritySchemes[scheme.Name] = struct{}{}
+				fragment := PascalCase(scheme.Name)
+				if err := registerAuthHelper("hasAuth"+fragment, "security scheme "+scheme.Name, "security schemes"); err != nil {
+					return err
+				}
+				if err := registerAuthHelper("applyAuth"+fragment, "security scheme "+scheme.Name, "security schemes"); err != nil {
+					return err
+				}
 			}
-			seenAuthHelpers[op.GoName] = op.ToolName
+		}
+
+		if op.AuthRequired {
+			if err := registerAuthHelper("applyAuthFor"+op.GoName, "operation "+op.ToolName, "operations"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
