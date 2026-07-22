@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -37,7 +38,7 @@ var mcpSDKDeps = map[string]struct {
 	Version string
 }{
 	"gosdk":     {Module: "github.com/modelcontextprotocol/go-sdk", Version: "v1.6.1"},
-	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.55.1"},
+	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.56.0"},
 }
 
 // ScaffoldOverrides lets callers (mainly tests) tweak fields the generator
@@ -100,13 +101,18 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 		return fmt.Errorf("scaffold mkdir %s: %w", opts.OutDir, err)
 	}
 
+	runtimeVersion, err := resolveRuntimeVersion(ov)
+	if err != nil {
+		return err
+	}
+
 	files := []struct {
 		name    string
 		content []byte
 		gofmt   bool
 	}{
 		{name: "main.go", content: renderScaffoldMain(opts, doc, sdk), gofmt: true},
-		{name: "go.mod", content: []byte(renderScaffoldGoMod(opts, dep, resolveRuntimeVersion(ov), ov.RuntimeReplace))},
+		{name: "go.mod", content: []byte(renderScaffoldGoMod(opts, dep, runtimeVersion, ov.RuntimeReplace))},
 		{name: "README.md", content: []byte(renderScaffoldReadme(opts, doc, schemes, sdk))},
 	}
 
@@ -138,19 +144,41 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 }
 
 // resolveRuntimeVersion picks the version string the scaffold's go.mod
-// uses to require this generator's runtime package. Override > build-info
-// > "v0.0.0" fallback. The fallback gets the user to `go mod tidy` cleanly
-// since v0.0.0 isn't a real release the proxy serves.
-func resolveRuntimeVersion(ov ScaffoldOverrides) string {
+// uses to require this generator's runtime package. A development build has
+// no version users can resolve, so it must be paired with an explicit version
+// or local replacement rather than emitting an unusable dependency.
+func resolveRuntimeVersion(ov ScaffoldOverrides) (string, error) {
+	buildVersion := ""
+	if info, ok := readBuildInfo(); ok {
+		buildVersion = info.Main.Version
+	}
+	return runtimeVersionForScaffold(ov, buildVersion)
+}
+
+var (
+	moduleVersionRE = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+	readBuildInfo   = debug.ReadBuildInfo
+)
+
+// runtimeVersionForScaffold resolves a version from caller overrides and a
+// supplied build version. Keeping the build version as an argument makes the
+// development-build behavior deterministic and directly testable.
+func runtimeVersionForScaffold(ov ScaffoldOverrides, buildVersion string) (string, error) {
 	if ov.RuntimeVersion != "" {
-		return ov.RuntimeVersion
-	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if v := info.Main.Version; v != "" && v != "(devel)" {
-			return v
+		if !moduleVersionRE.MatchString(ov.RuntimeVersion) {
+			return "", fmt.Errorf("scaffold: invalid RuntimeVersion %q", ov.RuntimeVersion)
 		}
+		return ov.RuntimeVersion, nil
 	}
-	return "v0.0.0"
+	if moduleVersionRE.MatchString(buildVersion) {
+		return buildVersion, nil
+	}
+	if ov.RuntimeReplace != "" {
+		// The replacement supplies the actual source, so this syntactically
+		// valid placeholder is never resolved through a module proxy.
+		return "v0.0.0", nil
+	}
+	return "", fmt.Errorf("scaffold: runtime version is unavailable from this development build; supply ScaffoldOverrides.RuntimeVersion or RuntimeReplace")
 }
 
 // renderScaffoldGoMod emits the go.mod declaration. The require block is

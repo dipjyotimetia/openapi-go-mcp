@@ -13,11 +13,22 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
+
+func TestMain(m *testing.M) {
+	originalReadBuildInfo := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3"}}, true
+	}
+	code := m.Run()
+	readBuildInfo = originalReadBuildInfo
+	os.Exit(code)
+}
 
 func newScaffoldDoc(title string) *openapi3.T {
 	return &openapi3.T{
@@ -163,6 +174,107 @@ func TestWriteScaffold_GoMod_ReplaceDirective(t *testing.T) {
 	body, _ := os.ReadFile(filepath.Join(out, "go.mod"))
 	if !strings.Contains(string(body), "replace github.com/dipjyotimetia/openapi-go-mcp => ../..") {
 		t.Errorf("expected replace directive in go.mod:\n%s", string(body))
+	}
+}
+
+func TestScaffoldSDKDependenciesMatchGeneratorGoMod(t *testing.T) {
+	goMod, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatalf("read generator go.mod: %v", err)
+	}
+
+	requireVersions := make(map[string]string)
+	indirect := make(map[string]bool)
+	inRequireBlock := false
+	for _, line := range strings.Split(string(goMod), "\n") {
+		line = strings.TrimSpace(line)
+		switch line {
+		case "require (":
+			inRequireBlock = true
+			continue
+		case ")":
+			inRequireBlock = false
+			continue
+		}
+		if !inRequireBlock || line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			requireVersions[fields[0]] = fields[1]
+			indirect[fields[0]] = strings.Contains(line, "// indirect")
+		}
+	}
+
+	for sdk, dep := range mcpSDKDeps {
+		if got := requireVersions[dep.Module]; got != dep.Version {
+			t.Errorf("%s scaffold dependency = %q; generator go.mod requires %q", sdk, dep.Version, got)
+		}
+		if indirect[dep.Module] {
+			t.Errorf("%s scaffold dependency %q must remain a direct generator dependency", sdk, dep.Module)
+		}
+	}
+}
+
+func TestWriteScaffold_RejectsDevelopmentBuildWithoutOverride(t *testing.T) {
+	originalReadBuildInfo := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
+	}
+	t.Cleanup(func() { readBuildInfo = originalReadBuildInfo })
+
+	err := WriteScaffold(Options{
+		Mode:        ModeProxy,
+		OutDir:      t.TempDir(),
+		PackageName: "petmcp",
+		ModulePath:  "example.com/petmcp",
+	}, newScaffoldDoc("Petstore"), nil)
+	if err == nil || !strings.Contains(err.Error(), "RuntimeVersion") {
+		t.Fatalf("expected development-build error that names the override, got %v", err)
+	}
+}
+
+func TestRuntimeVersionForScaffold_RejectsUnresolvedBuildVersion(t *testing.T) {
+	_, err := runtimeVersionForScaffold(ScaffoldOverrides{}, "(devel)")
+	if err == nil || !strings.Contains(err.Error(), "RuntimeVersion") {
+		t.Fatalf("expected unresolved build version error that names the override, got %v", err)
+	}
+}
+
+func TestRuntimeVersionForScaffold_AcceptsExplicitVersionOrReplaceOverride(t *testing.T) {
+	tests := []struct {
+		name     string
+		override ScaffoldOverrides
+		want     string
+	}{
+		{
+			name:     "version",
+			override: ScaffoldOverrides{RuntimeVersion: "v1.2.3"},
+			want:     "v1.2.3",
+		},
+		{
+			name:     "replace",
+			override: ScaffoldOverrides{RuntimeReplace: "../runtime"},
+			want:     "v0.0.0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := runtimeVersionForScaffold(tt.override, "(devel)")
+			if err != nil {
+				t.Fatalf("runtimeVersionForScaffold: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("runtime version = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRuntimeVersionForScaffold_RejectsInvalidExplicitVersion(t *testing.T) {
+	_, err := runtimeVersionForScaffold(ScaffoldOverrides{RuntimeVersion: "devel"}, "(devel)")
+	if err == nil || !strings.Contains(err.Error(), "invalid RuntimeVersion") {
+		t.Fatalf("expected invalid RuntimeVersion error, got %v", err)
 	}
 }
 
