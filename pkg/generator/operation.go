@@ -136,6 +136,10 @@ type Operation struct {
 	ResponseContentType string
 	// InputSchemaJSON is the encoded JSON Schema for the tool's input.
 	InputSchemaJSON string
+	// InputSchemaOpenAIJSON is the OpenAI-compatible form of InputSchemaJSON.
+	// It is populated alongside the default schema unless OpenAICompat was
+	// explicitly requested, which preserves the legacy single-schema output.
+	InputSchemaOpenAIJSON string
 	// OutputSchemaJSON is the encoded JSON Schema for the tool's output,
 	// lowered from the operation's selected 2xx JSON response schema. Empty
 	// when the response is not JSON or its root is not an object (MCP output
@@ -254,6 +258,15 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 				op.Security = policy.Alternatives
 				op.Anonymous = policy.Anonymous
 				op.AuthRequired = policy.Required
+			}
+			if !opts.OpenAICompat {
+				openAIConv := NewSchemaConverter(true)
+				openAIConv.Adopt(nameByPtr)
+				openAISchema, _, err := buildInputSchema(op, openAIConv)
+				if err != nil {
+					return nil, sink.finalize(), fmt.Errorf("%s %s: build OpenAI input schema: %w", method, path, err)
+				}
+				op.InputSchemaOpenAIJSON = openAISchema
 			}
 			ops = append(ops, op)
 		}

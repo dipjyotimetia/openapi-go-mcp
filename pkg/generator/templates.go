@@ -39,7 +39,7 @@ const toolLiteralSrc = `s.AddTool(
 // emits Go raw-string backticks.
 const schemaConstsSrc = "{{range .Ops}}\n" +
 	"const {{schemaConst .ToolName}} = `{{.InputSchemaJSON}}`\n" +
-	"{{if $.ProviderAware}}\nconst {{openAISchemaConst .ToolName}} = `{{.InputSchemaOpenAIJSON}}`\n{{end}}\n" +
+	"{{if $.ProviderAware}}\nconst {{openAISchemaConst .ToolName}} = `{{.InputSchemaOpenAIJSON}}`\n{{end}}" +
 	"{{if .OutputSchemaJSON}}\n" +
 	"const {{outputSchemaConst .ToolName}} = `{{.OutputSchemaJSON}}`\n" +
 	"{{end}}\n{{end}}\n"
@@ -72,8 +72,11 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ {{.ClientAlias}}.{{.ClientType}} = ({{.ClientAlias}}.{{.ClientType}})(nil)
 
-// {{.RegisterFunc}} registers every operation in the spec with the standard
+{{if .ProviderAware}}// {{.RegisterFunc}} registers every operation in the spec with the standard
 // MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
+{{else}}// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
+// Each tool delegates to the supplied oapi-codegen client.
+{{end -}}
 func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, opts ...runtime.Option) {
 	{{if .ProviderAware}}{{.RegisterFunc}}WithProvider(s, c, runtime.LLMProviderStandard, opts...)
 }
@@ -229,8 +232,10 @@ var _ = url.Values(nil)
 var _ = os.Getenv
 var _ = strings.ReplaceAll
 
-// {{.RegisterFunc}} registers every operation in the spec with the standard
+{{if .ProviderAware}}// {{.RegisterFunc}} registers every operation in the spec with the standard
 // MCP-compatible input schema.
+{{else}}// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
+{{end -}}
 // Each tool proxies its arguments to the upstream HTTP service identified
 // by the API_BASE_URL environment variable (default: {{.BaseURLDefault}}),
 // applying authentication from environment variables derived from the
