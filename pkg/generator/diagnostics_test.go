@@ -85,14 +85,14 @@ func TestDiagnostics_Callback(t *testing.T) {
 	}
 }
 
-func TestDiagnostics_UnsupportedParameterStyle_DeepObject(t *testing.T) {
+func TestDiagnostics_DeepObjectStyleIsSupported(t *testing.T) {
 	doc := docWith(t, "/x", func(op *openapi3.Operation, _ *openapi3.PathItem) {
 		op.Parameters = openapi3.Parameters{
 			{Value: &openapi3.Parameter{Name: "filter", In: "query", Style: "deepObject", Schema: openapi3.NewObjectSchema().NewRef()}},
 		}
 	})
-	if !hasDiagCode(diagsFor(t, doc), DiagUnsupportedParameterStyle) {
-		t.Errorf("expected %q diagnostic", DiagUnsupportedParameterStyle)
+	if hasDiagCode(diagsFor(t, doc), DiagUnsupportedParameterStyle) {
+		t.Errorf("did not expect %q diagnostic", DiagUnsupportedParameterStyle)
 	}
 }
 

@@ -101,6 +101,54 @@ func TestDecodeProxyParam_NilGroupHandled(t *testing.T) {
 	}
 }
 
+func TestSerializeProxyParam_OpenAPIStyles(t *testing.T) {
+	args := map[string]any{
+		"path": map[string]any{"id": []any{"red", "blue"}},
+		"query": map[string]any{
+			"tags":   []any{"red", "blue"},
+			"filter": map[string]any{"status": "available", "limit": float64(10)},
+		},
+	}
+
+	path, present, err := SerializeProxyParam(args, ProxyParamSpec{
+		Name: "id", In: "path", Style: "label", Explode: true,
+	}, true)
+	if err != nil || !present || path.Value != ".red.blue" {
+		t.Fatalf("label path = (%+v, %v, %v), want (.red.blue, true, nil)", path, present, err)
+	}
+
+	tags, present, err := SerializeProxyParam(args, ProxyParamSpec{
+		Name: "tags", In: "query", Style: "form", Explode: true,
+	}, false)
+	if err != nil || !present || tags.Query.Encode() != "tags=red&tags=blue" {
+		t.Fatalf("exploded form query = (%+v, %v, %v)", tags, present, err)
+	}
+
+	filter, present, err := SerializeProxyParam(args, ProxyParamSpec{
+		Name: "filter", In: "query", Style: "deepObject", Explode: true,
+	}, false)
+	if err != nil || !present || filter.Query.Encode() != "filter%5Blimit%5D=10&filter%5Bstatus%5D=available" {
+		t.Fatalf("deep object query = (%+v, %v, %v)", filter, present, err)
+	}
+}
+
+func TestSerializeProxyParam_AllowReservedPreservesQueryReservedCharacters(t *testing.T) {
+	args := map[string]any{"query": map[string]any{"redirect": "/a/b?x=1&y=2"}}
+	param, present, err := SerializeProxyParam(args, ProxyParamSpec{
+		Name: "redirect", In: "query", Style: "form", Explode: true, AllowReserved: true,
+	}, false)
+	if err != nil || !present {
+		t.Fatalf("serialize: present=%v err=%v", present, err)
+	}
+	got, err := BuildProxyURL("https://api.example.com", "/pets", param.Query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://api.example.com/pets?redirect=/a/b?x=1&y=2" {
+		t.Errorf("allowReserved URL = %q", got)
+	}
+}
+
 func TestBuildProxyURL_BasicJoin(t *testing.T) {
 	got, err := BuildProxyURL("https://api.example.com", "/pets/123", nil)
 	if err != nil || got != "https://api.example.com/pets/123" {

@@ -216,7 +216,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 
@@ -228,7 +227,6 @@ var _ = json.RawMessage(nil)
 var _ context.Context = nil
 var _ http.Header = nil
 var _ io.Reader = nil
-var _ = url.Values(nil)
 var _ = os.Getenv
 var _ = strings.ReplaceAll
 
@@ -286,23 +284,23 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 			pathStr := {{quote .Path}}
 			{{- range .PathParams}}
 			{
-				v, _, err := runtime.DecodeProxyParam(req.Arguments, "path", "{{.Name}}", true)
+				param, _, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "path", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, true)
 				if err != nil {
 					return runtime.HandleError(err)
 				}
-				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", runtime.PathEscape(v))
+				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", runtime.PathEscape(param.Value))
 			}
 			{{- end}}
 
-			q := url.Values{}
+			q := runtime.ProxyQuery{}
 			{{- range .QueryParams}}
 			{
-				v, present, err := runtime.DecodeProxyParam(req.Arguments, "query", "{{.Name}}", {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "query", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
 				if present {
-					q.Set("{{.Name}}", v)
+					q = append(q, param.Query...)
 				}
 			}
 			{{- end}}
@@ -365,23 +363,23 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 
 			{{- range .HeaderParams}}
 			{
-				v, present, err := runtime.DecodeProxyParam(req.Arguments, "header", "{{.Name}}", {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "header", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
 				if present {
-					httpReq.Header.Set("{{.Name}}", v)
+					httpReq.Header.Set("{{.Name}}", param.Value)
 				}
 			}
 			{{- end}}
 			{{- range .CookieParams}}
 			{
-				v, present, err := runtime.DecodeProxyParam(req.Arguments, "cookie", "{{.Name}}", {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
 				if present {
-					httpReq.AddCookie(&http.Cookie{Name: "{{.Name}}", Value: v}) // #nosec G124
+					httpReq.AddCookie(&http.Cookie{Name: "{{.Name}}", Value: param.Value}) // #nosec G124
 				}
 			}
 			{{- end}}
@@ -511,7 +509,7 @@ func templateFuncs() template.FuncMap {
 		// scheme names) as a Go-safe PascalCase fragment for use inside
 		// generated function names: "bearerAuth" → "BearerAuth",
 		// "api-key" → "ApiKey".
-		"pascalCase": PascalCase,
+		"pascalCase":         PascalCase,
 		"securityEnvVarsLit": securityEnvVarsLit,
 	}
 }

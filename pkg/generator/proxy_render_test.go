@@ -330,7 +330,7 @@ paths:
 		"runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)",
 		"context.WithTimeout(ctx, cfg.RequestTimeout)",
 		"runtime.SubstituteServerVariables(baseURL, cfg.ServerVariables)",
-		"runtime.PathEscape(v)",
+		"runtime.PathEscape(param.Value)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("proxy output missing %q\n--src--\n%s", want, prefix(got, 2400))

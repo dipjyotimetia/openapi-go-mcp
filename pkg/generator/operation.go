@@ -170,7 +170,13 @@ type ParamField struct {
 	GoType       string // Go type, e.g. "int64", "openapi_types.UUID"
 	GoTypeImport string // import path required for GoType (empty for builtins)
 	Required     bool
-	Schema       *openapi3.SchemaRef // original parameter schema, used to build the input schema
+	// Style, Explode, and AllowReserved are the wire-format metadata used by
+	// proxy mode. Style and Explode are resolved to their OpenAPI defaults
+	// while collecting the operation, so templates never need to infer them.
+	Style         string
+	Explode       bool
+	AllowReserved bool
+	Schema        *openapi3.SchemaRef // original parameter schema, used to build the input schema
 	// Description/Example/Deprecated carry Parameter-object-level metadata
 	// (as opposed to metadata on the parameter's schema). Merged into the
 	// tool input schema when the schema itself doesn't already declare the
@@ -708,14 +714,18 @@ func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath stri
 }
 
 // supportedParameterStyles enumerates the OpenAPI parameter `style` values
-// the runtime+oapi-codegen pipeline handles correctly today. Other styles
-// (deepObject, matrix, label, spaceDelimited, pipeDelimited) generate code
-// that may not match the spec's wire encoding; emit a diagnostic so the user
-// knows their spec was parsed but the encoding may differ.
+// supported by proxy mode's OpenAPI-aware serializer. A style may still be
+// invalid for a particular parameter location; runtime validation returns a
+// clear tool error in that case instead of silently changing the wire format.
 var supportedParameterStyles = map[string]struct{}{
-	"":       {}, // default
-	"form":   {},
-	"simple": {},
+	"":               {}, // default
+	"form":           {},
+	"simple":         {},
+	"label":          {},
+	"matrix":         {},
+	"spaceDelimited": {},
+	"pipeDelimited":  {},
+	"deepObject":     {},
 }
 
 func emitParameterStyleDiagnostic(p *openapi3.Parameter, opPath string, sink *diagSink) {
@@ -787,8 +797,37 @@ func paramFieldFromSpec(name string, p *openapi3.Parameter, required bool) Param
 		f.Description = p.Description
 		f.Example = p.Example
 		f.Deprecated = p.Deprecated
+		f.Style = parameterStyle(p)
+		f.Explode = parameterExplode(p, f.Style)
+		f.AllowReserved = p.AllowReserved
 	}
 	return f
+}
+
+func parameterStyle(p *openapi3.Parameter) string {
+	if p == nil {
+		return "form"
+	}
+	if p.Style != "" {
+		return p.Style
+	}
+	switch p.In {
+	case inPath, inHeader:
+		return "simple"
+	case inQuery, inCookie:
+		return "form"
+	default:
+		return "form"
+	}
+}
+
+func parameterExplode(p *openapi3.Parameter, style string) bool {
+	if p != nil && p.Explode != nil {
+		return *p.Explode
+	}
+	// form is the sole style with an explode=true default. deepObject is
+	// defined only with explode=true; use that valid form when omitted.
+	return style == "form" || style == "deepObject"
 }
 
 // pickRequestContent chooses the request content-type for an operation that
