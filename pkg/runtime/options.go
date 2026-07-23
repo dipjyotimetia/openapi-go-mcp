@@ -39,6 +39,10 @@ type Config struct {
 	// MaxResponseBytes bounds an upstream response before it is transformed
 	// into an MCP result. Zero uses DefaultMaxResponseBytes.
 	MaxResponseBytes int64
+	// MTLSConfigured is true only when HTTPClient was intentionally configured
+	// for client-certificate authentication. It keeps OpenAPI mutualTLS schemes
+	// fail-closed instead of treating any custom HTTP client as proof of mTLS.
+	MTLSConfigured bool
 	// ServerVariables holds substitutions for OpenAPI `servers[*].variables`
 	// templated URLs (e.g. {scheme}, {host}). Generated code may read this
 	// when constructing the upstream client base URL. Empty == use whatever
@@ -94,6 +98,17 @@ func WithExtraProperties(properties ...ExtraProperty) Option {
 func WithHTTPClient(c *http.Client) Option {
 	return func(cfg *Config) {
 		cfg.HTTPClient = c
+	}
+}
+
+// WithMTLSHTTPClient configures an HTTP client that already enforces mTLS.
+// Callers can construct it with HTTPClientWithMTLS. Generated mTLS scaffolds
+// use this option so an OpenAPI mutualTLS requirement cannot silently fall
+// back to an ordinary custom HTTP client.
+func WithMTLSHTTPClient(c *http.Client) Option {
+	return func(cfg *Config) {
+		cfg.HTTPClient = c
+		cfg.MTLSConfigured = c != nil
 	}
 }
 

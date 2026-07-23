@@ -105,6 +105,7 @@ func TestWithHTTPClient_AndTimeout_AndServerVars(t *testing.T) {
 	cfg := NewConfig()
 	client := &http.Client{Timeout: 5 * time.Second}
 	WithHTTPClient(client)(cfg)
+	WithMTLSHTTPClient(client)(cfg)
 	WithRequestTimeout(2 * time.Second)(cfg)
 	WithMaxResponseBytes(1234)(cfg)
 	WithServerVariables(map[string]string{"host": "api.example.com"})(cfg)
@@ -112,6 +113,9 @@ func TestWithHTTPClient_AndTimeout_AndServerVars(t *testing.T) {
 
 	if cfg.HTTPClient != client {
 		t.Errorf("HTTPClient not stored")
+	}
+	if !cfg.MTLSConfigured {
+		t.Error("MTLSConfigured not stored")
 	}
 	if cfg.RequestTimeout != 2*time.Second {
 		t.Errorf("RequestTimeout: got %v", cfg.RequestTimeout)

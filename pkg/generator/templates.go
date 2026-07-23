@@ -425,7 +425,7 @@ func hasAuth{{pascalCase .Name}}(cfg *runtime.Config) bool {
 {{- else if eq (printf "%s" .Kind) "custom"}}
 	return cfg.RequestAuthProvider != nil
 {{- else if eq (printf "%s" .Kind) "mtls"}}
-	return cfg.HTTPClient != nil
+	return cfg.MTLSConfigured
 {{- else if and (eq (printf "%s" .Kind) "oauth2") .OAuthTokenURL}}
 	return os.Getenv({{quote .EnvVar}}) != "" || (os.Getenv({{quote .ClientIDEnvVar}}) != "" && os.Getenv({{quote .ClientSecretEnvVar}}) != "")
 {{- else}}
@@ -468,7 +468,7 @@ func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *
 {{- else if eq (printf "%s" .Kind) "custom"}}
 	return runtime.ApplyRequestAuth(ctx, req, cfg.RequestAuthProvider)
 {{- else if eq (printf "%s" .Kind) "mtls"}}
-	if cfg.HTTPClient == nil {
+	if !cfg.MTLSConfigured {
 		return fmt.Errorf("mTLS client is not configured for security scheme %s", {{quote .Name}})
 	}
 	return nil

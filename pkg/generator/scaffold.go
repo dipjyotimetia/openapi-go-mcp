@@ -250,7 +250,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure mTLS: %v", err)
 	}
-	registerOpts = append(registerOpts, runtime.WithHTTPClient(mtlsClient))
+	registerOpts = append(registerOpts, runtime.WithMTLSHTTPClient(mtlsClient))
 	{{- end}}
 	{{.PkgName}}.{{.RegisterFunc}}(s, registerOpts...)
 

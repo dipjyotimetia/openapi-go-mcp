@@ -259,6 +259,43 @@ paths:
 	}
 }
 
+func TestRegister_MTLSRequiresExplicitClientAssertion(t *testing.T) {
+	called := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	specPath := filepath.Join(t.TempDir(), "mtls.yaml")
+	spec := fmt.Sprintf(`openapi: 3.1.0
+info: { title: mTLS, version: 1.0.0 }
+servers: [ { url: %s } ]
+components:
+  securitySchemes:
+    mtls: { type: mutualTLS }
+paths:
+  /secure:
+    get:
+      operationId: readSecure
+      security: [ { mtls: [] } ]
+      responses: { "204": { description: ok } }
+`, upstream.URL)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{}
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client()}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	result, err := server.handlers["readSecure"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
+	if err != nil || !result.IsError || !strings.Contains(result.Text, "no configured credential satisfies declared security") {
+		t.Fatalf("handler result = %#v, %v", result, err)
+	}
+	if called {
+		t.Fatal("unasserted mTLS client made an upstream request")
+	}
+}
+
 func TestRegister_BoundsUpstreamResponse(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, "12345")

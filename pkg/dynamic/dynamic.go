@@ -57,7 +57,11 @@ type Config struct {
 	// MaxResponseBytes limits upstream response buffering. Zero uses the
 	// runtime default, which is bounded for production safety.
 	MaxResponseBytes int64
-	ServerVariables  map[string]string
+	// MTLSConfigured must be true when UpstreamHTTPClient is configured with a
+	// client certificate for an OpenAPI mutualTLS scheme. The explicit signal
+	// prevents a regular custom client from satisfying that requirement.
+	MTLSConfigured  bool
+	ServerVariables map[string]string
 	// Provider selects the input-schema dialect advertised to the MCP client.
 	// The zero value selects the standard MCP-compatible schema.
 	Provider runtime.LLMProvider
@@ -90,7 +94,7 @@ func Register(ctx context.Context, server runtime.MCPServer, source string, cfg 
 	if err != nil {
 		return err
 	}
-	mtlsConfigured := cfg.UpstreamHTTPClient != nil
+	mtlsConfigured := cfg.MTLSConfigured
 	client := cfg.UpstreamHTTPClient
 	if client == nil {
 		client = http.DefaultClient
