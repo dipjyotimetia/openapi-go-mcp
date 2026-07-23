@@ -10,6 +10,7 @@ package generator
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -23,7 +24,8 @@ const toolLiteralSrc = `s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
 			Name:           "{{.ToolName}}",
 			Description:    {{quote .Description}},
-			RawInputSchema: json.RawMessage({{schemaConst .ToolName}}),
+			RawInputSchema: {{if $.ProviderAware}}inputSchemaForProvider(provider, {{schemaConst .ToolName}}, {{openAISchemaConst .ToolName}}){{else}}json.RawMessage({{schemaConst .ToolName}}){{end}},
+			StrictInputSchema: {{if $.ProviderAware}}provider == runtime.LLMProviderOpenAI{{else}}false{{end}},
 			{{- if .OutputSchemaJSON}}
 			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
 			{{- end}}
@@ -38,6 +40,7 @@ const toolLiteralSrc = `s.AddTool(
 // emits Go raw-string backticks.
 const schemaConstsSrc = "{{range .Ops}}\n" +
 	"const {{schemaConst .ToolName}} = `{{.InputSchemaJSON}}`\n" +
+	"{{if $.ProviderAware}}\nconst {{openAISchemaConst .ToolName}} = `{{.InputSchemaOpenAIJSON}}`\n{{end}}" +
 	"{{if .OutputSchemaJSON}}\n" +
 	"const {{outputSchemaConst .ToolName}} = `{{.OutputSchemaJSON}}`\n" +
 	"{{end}}\n{{end}}\n"
@@ -70,9 +73,25 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ {{.ClientAlias}}.{{.ClientType}} = ({{.ClientAlias}}.{{.ClientType}})(nil)
 
-// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
+{{if .ProviderAware}}// {{.RegisterFunc}} registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
+{{else}}// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
 // Each tool delegates to the supplied oapi-codegen client.
+{{end -}}
 func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, opts ...runtime.Option) {
+	{{if .ProviderAware}}{{.RegisterFunc}}WithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// {{.RegisterFunc}}OpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func {{.RegisterFunc}}OpenAI(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, opts ...runtime.Option) {
+	{{.RegisterFunc}}WithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// {{.RegisterFunc}}WithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, provider runtime.LLMProvider, opts ...runtime.Option) {
+	{{end}}
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -129,21 +148,23 @@ func {{.RegisterFunc}}(s runtime.MCPServer, c {{.ClientAlias}}.{{.ClientType}}, 
 			{{- end}}
 			{{- end}}
 			{{- if .CookieParams}}
-			cookieValues := runtime.CookieValues{}
+			cookieValues := runtime.CookiePairs{}
 			{{- range .CookieParams}}
 			{
-				var v string
-				if err := runtime.DecodeCookieParam(req.Arguments, "{{.Name}}", &v); err != nil {
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
+				if err != nil {
 					return runtime.HandleError(err)
 				}
-				cookieValues["{{.Name}}"] = v
+				if present {
+					cookieValues = append(cookieValues, param.Cookies...)
+				}
 			}
 			{{- end}}
-			cookieEditor := runtime.CookieRequestEditor(cookieValues)
+			cookieEditor := runtime.CookiePairsRequestEditor(cookieValues)
 			{{- end}}
 			resp, err := c.{{.CallMethod}}(ctx{{callArgs .}})
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -170,6 +191,17 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+{{if .ProviderAware}}
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+{{end}}
+
 ` + schemaConstsSrc
 
 // fileTemplateProxy is the master template for proxy mode. It emits a
@@ -185,30 +217,48 @@ package {{.PackageName}}
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
 
 // _ silences "imported and not used" when an operation set omits some helpers.
 var _ = json.RawMessage(nil)
+var _ = fmt.Errorf
 var _ context.Context = nil
 var _ http.Header = nil
 var _ io.Reader = nil
-var _ = url.Values(nil)
 var _ = os.Getenv
 var _ = strings.ReplaceAll
+var _ sync.Mutex
 
-// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
+{{if .ProviderAware}}// {{.RegisterFunc}} registers every operation in the spec with the standard
+// MCP-compatible input schema.
+{{else}}// {{.RegisterFunc}} registers every operation in the spec as an MCP tool.
+{{end -}}
 // Each tool proxies its arguments to the upstream HTTP service identified
 // by the API_BASE_URL environment variable (default: {{.BaseURLDefault}}),
 // applying authentication from environment variables derived from the
 // spec's securitySchemes. See README.md for the env-var table.
 func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
+	{{if .ProviderAware}}{{.RegisterFunc}}WithProvider(s, runtime.LLMProviderStandard, opts...)
+}
+
+// {{.RegisterFunc}}OpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func {{.RegisterFunc}}OpenAI(s runtime.MCPServer, opts ...runtime.Option) {
+	{{.RegisterFunc}}WithProvider(s, runtime.LLMProviderOpenAI, opts...)
+}
+
+// {{.RegisterFunc}}WithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProvider, opts ...runtime.Option) {
+	{{end}}
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -227,6 +277,7 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	httpClient = runtime.HTTPClientWithoutRedirects(httpClient)
 
 	{{range .Ops}}
 	// {{.Method}} {{.Path}}
@@ -241,23 +292,23 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 			pathStr := {{quote .Path}}
 			{{- range .PathParams}}
 			{
-				v, _, err := runtime.DecodeProxyParam(req.Arguments, "path", "{{.Name}}", true)
+				param, _, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "path", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, true)
 				if err != nil {
 					return runtime.HandleError(err)
 				}
-				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", runtime.PathEscape(v))
+				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", param.Value)
 			}
 			{{- end}}
 
-			q := url.Values{}
+			q := runtime.ProxyQuery{}
 			{{- range .QueryParams}}
 			{
-				v, present, err := runtime.DecodeProxyParam(req.Arguments, "query", "{{.Name}}", {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "query", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
 				if present {
-					q.Set("{{.Name}}", v)
+					q = append(q, param.Query...)
 				}
 			}
 			{{- end}}
@@ -320,40 +371,40 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 
 			{{- range .HeaderParams}}
 			{
-				v, present, err := runtime.DecodeProxyParam(req.Arguments, "header", "{{.Name}}", {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "header", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
 				if present {
-					httpReq.Header.Set("{{.Name}}", v)
+					httpReq.Header.Set("{{.Name}}", param.Value)
 				}
 			}
 			{{- end}}
 			{{- range .CookieParams}}
 			{
-				v, present, err := runtime.DecodeProxyParam(req.Arguments, "cookie", "{{.Name}}", {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
 				if present {
-					httpReq.AddCookie(&http.Cookie{Name: "{{.Name}}", Value: v}) // #nosec G124
+					for _, cookie := range param.Cookies {
+						httpReq.AddCookie(&http.Cookie{Name: cookie.Name, Value: cookie.Value}) // #nosec G124
+					}
 				}
 			}
 			{{- end}}
 
-			{{- if and (not .Anonymous) .Security}}
-			{{- range .Security}}
-			if err := applyAuth{{pascalCase .Name}}(httpReq); err != nil {
+			{{- if .AuthRequired}}
+			if err := applyAuthFor{{.GoName}}(ctx, httpReq, cfg); err != nil {
 				return runtime.HandleError(err)
 			}
-			{{- end}}
 			{{- end}}
 
 			httpResp, err := httpClient.Do(httpReq)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
-			respBody, err := runtime.ReadResponseBody(httpResp)
+			respBody, err := runtime.ReadResponseBodyLimit(httpResp, cfg.MaxResponseBytes)
 			if err != nil {
 				return runtime.HandleError(err)
 			}
@@ -369,9 +420,26 @@ func {{.RegisterFunc}}(s runtime.MCPServer, opts ...runtime.Option) {
 }
 
 {{range .AllSchemes}}
+// hasAuth{{pascalCase .Name}} reports whether the environment supplies every
+// credential required for this security scheme. Policy helpers use it to
+// select an OpenAPI OR alternative without sending an unauthenticated request.
+func hasAuth{{pascalCase .Name}}(cfg *runtime.Config) bool {
+{{- if eq (printf "%s" .Kind) "httpBasic"}}
+	return os.Getenv({{quote .UsernameEnvVar}}) != "" && os.Getenv({{quote .PasswordEnvVar}}) != ""
+{{- else if eq (printf "%s" .Kind) "custom"}}
+	return runtime.RequestAuthProviderAvailable(cfg.RequestAuthProvider, {{quote .Name}})
+{{- else if eq (printf "%s" .Kind) "mtls"}}
+	return cfg.MTLSConfigured
+{{- else if and (eq (printf "%s" .Kind) "oauth2") .OAuthTokenURL}}
+	return os.Getenv({{quote .EnvVar}}) != "" || (os.Getenv({{quote .ClientIDEnvVar}}) != "" && os.Getenv({{quote .ClientSecretEnvVar}}) != "")
+{{- else}}
+	return os.Getenv({{quote .EnvVar}}) != ""
+{{- end}}
+}
+
 // applyAuth{{pascalCase .Name}} attaches credentials for the {{quote .Name}}
 // security scheme to req, reading them from the environment.
-func applyAuth{{pascalCase .Name}}(req *http.Request) error {
+func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *runtime.Config{{if eq (printf "%s" .Kind) "oauth2"}}, requestedScopes []string{{end}}) error {
 {{- if eq (printf "%s" .Kind) "apiKey"}}
 	v := os.Getenv({{quote .EnvVar}})
 	if v == "" {
@@ -386,10 +454,14 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 	return runtime.ApplyBearer(req, v)
 {{- else if eq (printf "%s" .Kind) "oauth2"}}
 	v := os.Getenv({{quote .EnvVar}})
-	if v == "" {
-		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .EnvVar}}}
+	if v != "" {
+		return runtime.ApplyBearer(req, v)
 	}
-	return runtime.ApplyBearer(req, v)
+{{- if .OAuthTokenURL}}
+	return applyOAuthClientCredentials{{pascalCase .Name}}(ctx, req, requestedScopes)
+{{- else}}
+	return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .EnvVar}}}
+{{- end}}
 {{- else if eq (printf "%s" .Kind) "httpBasic"}}
 	user := os.Getenv({{quote .UsernameEnvVar}})
 	pass := os.Getenv({{quote .PasswordEnvVar}})
@@ -397,7 +469,82 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .UsernameEnvVar}} + "/" + {{quote .PasswordEnvVar}}}
 	}
 	return runtime.ApplyBasic(req, user, pass)
+{{- else if eq (printf "%s" .Kind) "custom"}}
+	return runtime.ApplyRequestAuthForSecurityScheme(ctx, req, cfg.RequestAuthProvider, {{quote .Name}})
+{{- else if eq (printf "%s" .Kind) "mtls"}}
+	if !cfg.MTLSConfigured {
+		return fmt.Errorf("mTLS client is not configured for security scheme %s", {{quote .Name}})
+	}
+	if req.URL == nil || req.URL.Scheme != "https" {
+		return fmt.Errorf("mTLS security scheme %s requires an HTTPS upstream URL", {{quote .Name}})
+	}
+	return nil
 {{- end}}
+}
+{{if and (eq (printf "%s" .Kind) "oauth2") .OAuthTokenURL}}
+
+var oauthClientCredentials{{pascalCase .Name}} struct {
+	sync.Mutex
+	provider *runtime.ClientCredentialsProvider
+	clientID string
+	clientSecret string
+	scopes       string
+}
+
+func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *http.Request, requestedScopes []string) error {
+	clientID := os.Getenv({{quote .ClientIDEnvVar}})
+	clientSecret := os.Getenv({{quote .ClientSecretEnvVar}})
+	if clientID == "" || clientSecret == "" {
+		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .ClientIDEnvVar}} + "/" + {{quote .ClientSecretEnvVar}}}
+	}
+	oauthClientCredentials{{pascalCase .Name}}.Lock()
+	scopeKey := strings.Join(requestedScopes, " ")
+	if oauthClientCredentials{{pascalCase .Name}}.provider == nil || oauthClientCredentials{{pascalCase .Name}}.clientID != clientID || oauthClientCredentials{{pascalCase .Name}}.clientSecret != clientSecret || oauthClientCredentials{{pascalCase .Name}}.scopes != scopeKey {
+		provider, err := runtime.NewClientCredentialsProvider(runtime.ClientCredentialsConfig{TokenURL: {{quote .OAuthTokenURL}}, ClientID: clientID, ClientSecret: clientSecret, Scopes: requestedScopes})
+		if err != nil {
+			oauthClientCredentials{{pascalCase .Name}}.Unlock()
+			return err
+		}
+		oauthClientCredentials{{pascalCase .Name}}.provider = provider
+		oauthClientCredentials{{pascalCase .Name}}.clientID = clientID
+		oauthClientCredentials{{pascalCase .Name}}.clientSecret = clientSecret
+		oauthClientCredentials{{pascalCase .Name}}.scopes = scopeKey
+	}
+	provider := oauthClientCredentials{{pascalCase .Name}}.provider
+	oauthClientCredentials{{pascalCase .Name}}.Unlock()
+	return provider.Apply(ctx, req)
+}
+{{end}}
+{{end}}
+
+{{range .Ops}}{{if .AuthRequired}}{{$method := .Method}}{{$path := .Path}}
+// applyAuthFor{{.GoName}} evaluates the OpenAPI security requirement for this
+// operation. Outer alternatives are OR; schemes within an alternative are AND.
+// If no complete alternative has credentials, no upstream request is made.
+func applyAuthFor{{.GoName}}(ctx context.Context, req *http.Request, cfg *runtime.Config) error {
+{{range .Security}}
+	if {{range $index, $scheme := .}}{{if $index}} && {{end}}hasAuth{{pascalCase $scheme.Name}}(cfg){{end}} {
+		if !cfg.AllowInsecureAuth && (req.URL == nil || req.URL.Scheme != "https") {
+			return fmt.Errorf("authenticated operation {{$method}} {{$path}} requires an HTTPS upstream URL")
+		}
+		{{range .}}if err := applyAuth{{pascalCase .Name}}(ctx, req, cfg{{if eq (printf "%s" .Kind) "oauth2"}}, {{oauthScopesLit .OAuthRequestScopes}}{{end}}); err != nil {
+			return err
+		}
+		{{end}}return nil
+	}
+{{end}}
+	return &runtime.UnsatisfiedSecurityError{Operation: {{quote (printf "%s %s" .Method .Path)}}, MissingEnvVars: {{securityEnvVarsLit .Security}}}
+}
+{{end}}{{end}}
+
+{{if .ProviderAware}}
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
 }
 {{end}}
 
@@ -409,6 +556,9 @@ func templateFuncs() template.FuncMap {
 		"quote": goQuote,
 		"schemaConst": func(toolName string) string {
 			return "input_" + safeIdent(toolName)
+		},
+		"openAISchemaConst": func(toolName string) string {
+			return "input_openai_" + safeIdent(toolName)
 		},
 		"outputSchemaConst": func(toolName string) string {
 			return "output_" + safeIdent(toolName)
@@ -426,8 +576,59 @@ func templateFuncs() template.FuncMap {
 		// scheme names) as a Go-safe PascalCase fragment for use inside
 		// generated function names: "bearerAuth" → "BearerAuth",
 		// "api-key" → "ApiKey".
-		"pascalCase": PascalCase,
+		"pascalCase":         PascalCase,
+		"securityEnvVarsLit": securityEnvVarsLit,
+		"oauthScopesLit":     oauthScopesLit,
 	}
+}
+
+func oauthScopesLit(scopes []string) string {
+	if len(scopes) == 0 {
+		return "nil"
+	}
+	values := append([]string(nil), scopes...)
+	sort.Strings(values)
+	parts := make([]string, 0, len(values))
+	for _, scope := range values {
+		parts = append(parts, strconv.Quote(scope))
+	}
+	return "[]string{" + strings.Join(parts, ", ") + "}"
+}
+
+// securityEnvVarsLit renders the stable, deduplicated environment-variable
+// names that could satisfy any security alternative. It makes a fail-closed
+// generated error actionable without exposing credential values.
+func securityEnvVarsLit(alternatives [][]SecurityScheme) string {
+	seen := map[string]struct{}{}
+	var vars []string
+	for _, alternative := range alternatives {
+		for _, scheme := range alternative {
+			if scheme.Kind == SecurityHTTPBasic {
+				seen[scheme.UsernameEnvVar] = struct{}{}
+				seen[scheme.PasswordEnvVar] = struct{}{}
+				continue
+			}
+			if scheme.Kind == SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+				seen[scheme.ClientIDEnvVar] = struct{}{}
+				seen[scheme.ClientSecretEnvVar] = struct{}{}
+			}
+			seen[scheme.EnvVar] = struct{}{}
+		}
+	}
+	for envVar := range seen {
+		if envVar != "" {
+			vars = append(vars, envVar)
+		}
+	}
+	sort.Strings(vars)
+	if len(vars) == 0 {
+		return "nil"
+	}
+	parts := make([]string, 0, len(vars))
+	for _, envVar := range vars {
+		parts = append(parts, strconv.Quote(envVar))
+	}
+	return "[]string{" + strings.Join(parts, ", ") + "}"
 }
 
 // annotationsLit renders op.Annotations (computed by toolAnnotations in

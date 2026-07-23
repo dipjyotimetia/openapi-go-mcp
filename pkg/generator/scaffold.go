@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -37,12 +38,11 @@ var mcpSDKDeps = map[string]struct {
 	Version string
 }{
 	"gosdk":     {Module: "github.com/modelcontextprotocol/go-sdk", Version: "v1.6.1"},
-	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.55.1"},
+	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.56.0"},
 }
 
 // ScaffoldOverrides lets callers (mainly tests) tweak fields the generator
-// would otherwise derive from build-time metadata. None of these fields
-// are exposed via the CLI — the CLI uses the defaults.
+// would otherwise derive from build-time metadata.
 type ScaffoldOverrides struct {
 	// RuntimeVersion overrides the version this scaffold's go.mod will
 	// pin its dependency on the openapi-go-mcp runtime to. Empty =
@@ -74,18 +74,52 @@ type ScaffoldOverrides struct {
 // The function is robust against an empty schemes slice (an anonymous
 // API): the README simply notes "no authentication required".
 func WriteScaffold(opts Options, doc *openapi3.T, schemes []SecurityScheme) error {
-	return WriteScaffoldWithOverrides(opts, doc, schemes, ScaffoldOverrides{})
+	return WriteScaffoldWithOverrides(opts, doc, schemes, ScaffoldOverrides{
+		RuntimeVersion: opts.RuntimeVersion,
+	})
 }
 
 // WriteScaffoldWithOverrides is WriteScaffold with the override knobs
 // exposed. Used by tests that need to compile the scaffold against the
 // in-tree runtime via a `replace` directive.
 func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []SecurityScheme, ov ScaffoldOverrides) error {
+	files, err := prepareScaffoldFiles(opts, doc, schemes, ov)
+	if err != nil {
+		return err
+	}
+	if err := preflightScaffoldFiles(opts, files); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
+		return fmt.Errorf("scaffold mkdir %s: %w", opts.OutDir, err)
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(opts.OutDir, f.name), f.content, 0o644); err != nil {
+			return fmt.Errorf("scaffold write %s: %w", f.name, err)
+		}
+	}
+	return nil
+}
+
+type scaffoldFile struct {
+	name    string
+	content []byte
+}
+
+func preflightScaffold(opts Options, doc *openapi3.T, schemes []SecurityScheme) error {
+	files, err := prepareScaffoldFiles(opts, doc, schemes, ScaffoldOverrides{RuntimeVersion: opts.RuntimeVersion})
+	if err != nil {
+		return err
+	}
+	return preflightScaffoldFiles(opts, files)
+}
+
+func prepareScaffoldFiles(opts Options, doc *openapi3.T, schemes []SecurityScheme, ov ScaffoldOverrides) ([]scaffoldFile, error) {
 	if opts.Mode != ModeProxy {
-		return nil
+		return nil, nil
 	}
 	if opts.ModulePath == "" {
-		return fmt.Errorf("scaffold: ModulePath is required in proxy mode")
+		return nil, fmt.Errorf("scaffold: ModulePath is required in proxy mode")
 	}
 	sdk := opts.SDK
 	if sdk == "" {
@@ -93,23 +127,37 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 	}
 	dep, ok := mcpSDKDeps[sdk]
 	if !ok {
-		return fmt.Errorf("scaffold: unsupported SDK %q (expected gosdk or mark3labs)", sdk)
+		return nil, fmt.Errorf("scaffold: unsupported SDK %q (expected gosdk or mark3labs)", sdk)
 	}
-
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
-		return fmt.Errorf("scaffold mkdir %s: %w", opts.OutDir, err)
+	runtimeVersion, err := resolveRuntimeVersion(ov)
+	if err != nil {
+		return nil, err
 	}
-
 	files := []struct {
 		name    string
 		content []byte
 		gofmt   bool
 	}{
-		{name: "main.go", content: renderScaffoldMain(opts, doc, sdk), gofmt: true},
-		{name: "go.mod", content: []byte(renderScaffoldGoMod(opts, dep, resolveRuntimeVersion(ov), ov.RuntimeReplace))},
+		{name: "main.go", content: renderScaffoldMain(opts, doc, sdk, schemes), gofmt: true},
+		{name: "go.mod", content: []byte(renderScaffoldGoMod(opts, dep, runtimeVersion, ov.RuntimeReplace))},
 		{name: "README.md", content: []byte(renderScaffoldReadme(opts, doc, schemes, sdk))},
 	}
+	prepared := make([]scaffoldFile, 0, len(files))
+	for _, f := range files {
+		body := f.content
+		if f.gofmt {
+			formatted, ferr := format.Source(body)
+			if ferr != nil {
+				return nil, fmt.Errorf("scaffold gofmt %s: %w\n--- source ---\n%s", f.name, ferr, body)
+			}
+			body = formatted
+		}
+		prepared = append(prepared, scaffoldFile{name: f.name, content: body})
+	}
+	return prepared, nil
+}
 
+func preflightScaffoldFiles(opts Options, files []scaffoldFile) error {
 	for _, f := range files {
 		target := filepath.Join(opts.OutDir, f.name)
 		if info, err := os.Stat(target); err == nil {
@@ -122,35 +170,46 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("scaffold stat %s: %w", target, err)
 		}
-		body := f.content
-		if f.gofmt {
-			formatted, ferr := format.Source(body)
-			if ferr != nil {
-				return fmt.Errorf("scaffold gofmt %s: %w\n--- source ---\n%s", f.name, ferr, body)
-			}
-			body = formatted
-		}
-		if err := os.WriteFile(target, body, 0o644); err != nil {
-			return fmt.Errorf("scaffold write %s: %w", target, err)
-		}
 	}
 	return nil
 }
 
 // resolveRuntimeVersion picks the version string the scaffold's go.mod
-// uses to require this generator's runtime package. Override > build-info
-// > "v0.0.0" fallback. The fallback gets the user to `go mod tidy` cleanly
-// since v0.0.0 isn't a real release the proxy serves.
-func resolveRuntimeVersion(ov ScaffoldOverrides) string {
+// uses to require this generator's runtime package. A development build has
+// no version users can resolve, so it must be paired with an explicit version
+// or local replacement rather than emitting an unusable dependency.
+func resolveRuntimeVersion(ov ScaffoldOverrides) (string, error) {
+	buildVersion := ""
+	if info, ok := readBuildInfo(); ok {
+		buildVersion = info.Main.Version
+	}
+	return runtimeVersionForScaffold(ov, buildVersion)
+}
+
+var (
+	moduleVersionRE = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+	readBuildInfo   = debug.ReadBuildInfo
+)
+
+// runtimeVersionForScaffold resolves a version from caller overrides and a
+// supplied build version. Keeping the build version as an argument makes the
+// development-build behavior deterministic and directly testable.
+func runtimeVersionForScaffold(ov ScaffoldOverrides, buildVersion string) (string, error) {
 	if ov.RuntimeVersion != "" {
-		return ov.RuntimeVersion
-	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if v := info.Main.Version; v != "" && v != "(devel)" {
-			return v
+		if !moduleVersionRE.MatchString(ov.RuntimeVersion) {
+			return "", fmt.Errorf("scaffold: invalid RuntimeVersion %q", ov.RuntimeVersion)
 		}
+		return ov.RuntimeVersion, nil
 	}
-	return "v0.0.0"
+	if moduleVersionRE.MatchString(buildVersion) {
+		return buildVersion, nil
+	}
+	if ov.RuntimeReplace != "" {
+		// The replacement supplies the actual source, so this syntactically
+		// valid placeholder is never resolved through a module proxy.
+		return "v0.0.0", nil
+	}
+	return "", fmt.Errorf("scaffold: runtime version is unavailable from this development build; supply ScaffoldOverrides.RuntimeVersion or RuntimeReplace")
 }
 
 // renderScaffoldGoMod emits the go.mod declaration. The require block is
@@ -159,10 +218,9 @@ func resolveRuntimeVersion(ov ScaffoldOverrides) string {
 func renderScaffoldGoMod(opts Options, sdk struct{ Module, Version string }, runtimeVer, replacePath string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "module %s\n\n", opts.ModulePath)
-	// go.mod's `go` directive: pin to a baseline that the generated
-	// source is known to compile against. Matching the generator's own
-	// minor version is too aggressive; pin to the stable baseline.
-	b.WriteString("go 1.23\n\n")
+	// The generated module imports this runtime package, so its toolchain
+	// baseline must match the runtime module's declared Go version.
+	b.WriteString("go 1.26\n\n")
 	requires := []struct{ Module, Version string }{
 		{Module: runtimeModulePath, Version: runtimeVer},
 		sdk,
@@ -204,12 +262,33 @@ import (
 {{- end}}
 
 	"{{.PkgImport}}"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/{{.Adapter}}"
 )
 
 func main() {
 	raw, s := {{.Adapter}}.NewServer({{quote .ServerName}}, {{quote .ServerVersion}})
-	{{.PkgName}}.{{.RegisterFunc}}(s)
+	registerOpts := []runtime.Option{}
+	if os.Getenv("ALLOW_INSECURE_AUTH") == "1" {
+		registerOpts = append(registerOpts, runtime.WithAllowInsecureAuth())
+	}
+	{{- if .UsesMTLS}}
+	mtlsCertFile := os.Getenv("MTLS_CERT_FILE")
+	mtlsKeyFile := os.Getenv("MTLS_KEY_FILE")
+	if mtlsCertFile != "" || mtlsKeyFile != "" {
+		mtlsClient, err := runtime.HTTPClientWithMTLS(nil, runtime.MTLSConfig{
+			CertificateFile: mtlsCertFile,
+			KeyFile:         mtlsKeyFile,
+			CAFile:          os.Getenv("MTLS_CA_FILE"),
+			ServerName:      os.Getenv("MTLS_SERVER_NAME"),
+		})
+		if err != nil {
+			log.Fatalf("configure mTLS: %v", err)
+		}
+		registerOpts = append(registerOpts, runtime.WithMTLSHTTPClient(mtlsClient))
+	}
+	{{- end}}
+	{{.PkgName}}.{{.RegisterFunc}}(s, registerOpts...)
 
 	fmt.Fprintf(os.Stderr, "%s serving over stdio\n", {{quote .ServerName}})
 {{- if eq .Adapter "gosdk"}}
@@ -228,7 +307,7 @@ func main() {
 // execution panic — the inputs are tightly constrained (opts validated
 // upstream, doc.Info nilness handled), so any failure here is a generator
 // bug we want surfaced loudly in tests.
-func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
+func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string, schemes []SecurityScheme) []byte {
 	view := struct {
 		Adapter       string
 		PkgImport     string
@@ -236,6 +315,7 @@ func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
 		RegisterFunc  string
 		ServerName    string
 		ServerVersion string
+		UsesMTLS      bool
 	}{
 		Adapter:       sdk,
 		PkgImport:     path.Join(opts.ModulePath, opts.PackageName),
@@ -243,6 +323,7 @@ func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
 		RegisterFunc:  registerFuncName(doc),
 		ServerName:    derivedServerName(opts, doc),
 		ServerVersion: derivedServerVersion(doc),
+		UsesMTLS:      usesMTLS(schemes),
 	}
 	tmpl := template.Must(template.New("main").Funcs(template.FuncMap{"quote": goQuote}).Parse(scaffoldMainTemplate))
 	var buf bytes.Buffer
@@ -250,6 +331,15 @@ func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
 		panic(fmt.Sprintf("scaffold main template: %v", err))
 	}
 	return buf.Bytes()
+}
+
+func usesMTLS(schemes []SecurityScheme) bool {
+	for _, scheme := range schemes {
+		if scheme.Kind == SecurityMTLS {
+			return true
+		}
+	}
+	return false
 }
 
 // derivedServerName is the "name" the generated main.go advertises to MCP
@@ -299,6 +389,17 @@ func renderScaffoldReadme(opts Options, doc *openapi3.T, schemes []SecuritySchem
 			case SecurityHTTPBasic:
 				fmt.Fprintf(&b, "| `%s` | Username for HTTP Basic auth scheme `%s`. |\n", s.UsernameEnvVar, s.Name)
 				fmt.Fprintf(&b, "| `%s` | Password for HTTP Basic auth scheme `%s`. |\n", s.PasswordEnvVar, s.Name)
+			case SecurityOAuth2:
+				fmt.Fprintf(&b, "| `%s` | Pre-acquired OAuth 2 access token for scheme `%s` (optional with client credentials). |\n", s.EnvVar, s.Name)
+				if s.OAuthTokenURL != "" {
+					fmt.Fprintf(&b, "| `%s` | OAuth 2 client ID for `%s` client-credentials flow. |\n", s.ClientIDEnvVar, s.Name)
+					fmt.Fprintf(&b, "| `%s` | OAuth 2 client secret for `%s` client-credentials flow. |\n", s.ClientSecretEnvVar, s.Name)
+				}
+			case SecurityMTLS:
+				fmt.Fprintf(&b, "| `MTLS_CERT_FILE` | PEM client certificate required for mTLS scheme `%s`. |\n", s.Name)
+				fmt.Fprintf(&b, "| `MTLS_KEY_FILE` | PEM private key required for mTLS scheme `%s`. |\n", s.Name)
+				fmt.Fprintf(&b, "| `MTLS_CA_FILE` | Optional PEM CA bundle for mTLS scheme `%s`. |\n", s.Name)
+				fmt.Fprintf(&b, "| `MTLS_SERVER_NAME` | Optional TLS server name override for mTLS scheme `%s`. |\n", s.Name)
 			default:
 				fmt.Fprintf(&b, "| `%s` | Credential for security scheme `%s` (kind: %s). |\n", s.EnvVar, s.Name, s.Kind)
 			}

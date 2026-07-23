@@ -290,7 +290,7 @@ paths:
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"getThing","arguments":{}}}`,
 	}
-	resp := stdioRoundTrip(t, bin, []string{"BEARER_TOKEN_BEARERAUTH=test-token-123"}, reqs, 20*time.Second)
+	resp := stdioRoundTrip(t, bin, []string{"BEARER_TOKEN_BEARERAUTH=test-token-123", "ALLOW_INSECURE_AUTH=1"}, reqs, 20*time.Second)
 	if resp == "" {
 		t.Fatalf("no response from server")
 	}
@@ -363,6 +363,74 @@ paths:
 	resp := stdioRoundTrip(t, bin, nil, reqs, 15*time.Second)
 	if !strings.Contains(resp, "BEARER_TOKEN_BEARERAUTH") {
 		t.Errorf("MCP response should name the missing env var; got %s", resp)
+	}
+}
+
+func TestCLI_Proxy_SecurityORSelectsConfiguredAlternative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build-and-run e2e in -short mode")
+	}
+	h := newProxyHarness(t, nil)
+	defer h.close()
+	spec := `openapi: 3.0.0
+info: { title: AuthOR, version: "1.0" }
+servers: [ { url: "` + h.upstreamURL + `" } ]
+security:
+  - apiKey: []
+  - bearer: []
+components:
+  securitySchemes:
+    apiKey: { type: apiKey, in: header, name: X-API-Key }
+    bearer: { type: http, scheme: bearer }
+paths:
+  /thing:
+    get:
+      operationId: getThing
+      responses: { "200": { description: ok } }
+`
+	resp := runProxyToolCall(t, spec, []string{"BEARER_TOKEN_BEARER=chosen-token"}, []string{
+		initRequest,
+		toolCallRequest(2, "getThing", "{}"),
+	})
+	if strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("tool call unexpectedly failed: %s", resp)
+	}
+	if got := h.captured(); got == nil {
+		t.Fatal("expected configured security alternative to reach upstream")
+	} else if got.Header.Get("Authorization") != "Bearer chosen-token" {
+		t.Errorf("Authorization = %q, want bearer alternative", got.Header.Get("Authorization"))
+	}
+}
+
+func TestCLI_Proxy_UnsupportedDeclaredSecurityFailsClosed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build-and-run e2e in -short mode")
+	}
+	h := newProxyHarness(t, nil)
+	defer h.close()
+	spec := `openapi: 3.0.0
+info: { title: AuthFailClosed, version: "1.0" }
+servers: [ { url: "` + h.upstreamURL + `" } ]
+security:
+  - digest: []
+components:
+  securitySchemes:
+    digest: { type: http, scheme: digest }
+paths:
+  /thing:
+    get:
+      operationId: getThing
+      responses: { "200": { description: ok } }
+`
+	resp := runProxyToolCall(t, spec, nil, []string{
+		initRequest,
+		toolCallRequest(2, "getThing", "{}"),
+	})
+	if !strings.Contains(resp, "no configured credential satisfies declared security") {
+		t.Fatalf("expected fail-closed security error, got %s", resp)
+	}
+	if got := h.captured(); got != nil {
+		t.Fatalf("unsupported declared security must not reach upstream, got %s %s", got.Method, got.URL)
 	}
 }
 

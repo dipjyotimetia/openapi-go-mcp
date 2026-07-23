@@ -16,8 +16,10 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"slices"
@@ -32,10 +34,13 @@ type MCPServer interface {
 
 // Tool describes an MCP tool independent of any MCP library.
 type Tool struct {
-	Name            string
-	Description     string
-	RawInputSchema  json.RawMessage
-	RawOutputSchema json.RawMessage
+	Name           string
+	Description    string
+	RawInputSchema json.RawMessage
+	// StrictInputSchema marks an OpenAI strict-schema registration. Runtime
+	// schema augmentations must retain strict invariants for this surface.
+	StrictInputSchema bool
+	RawOutputSchema   json.RawMessage
 	// Annotations carries the MCP tool-annotation hints. Nil means "no
 	// annotations" — the underlying SDK omits the block entirely.
 	Annotations *ToolAnnotations
@@ -94,6 +99,9 @@ const (
 	MediaImage MediaKind = "image"
 	// MediaAudio marks Binary as audio bytes to surface as MCP AudioContent.
 	MediaAudio MediaKind = "audio"
+	// MediaResource marks Binary as an embedded MCP blob resource. It is used
+	// for binary types, such as PDFs and video, that MCP has no dedicated block.
+	MediaResource MediaKind = "resource"
 )
 
 // CallToolResult is the response from a tool handler.
@@ -119,6 +127,10 @@ type CallToolResult struct {
 	// MIMEType is the media type of Binary (e.g. "image/png"), without
 	// parameters. Set if and only if MediaKind is set.
 	MIMEType string
+	// ResourceURI identifies an embedded resource payload. It is set only when
+	// MediaKind is MediaResource and is content-addressed to avoid inventing a
+	// fetchable upstream URL or leaking upstream credentials to MCP clients.
+	ResourceURI string
 }
 
 // NewToolResultText creates a successful text result.
@@ -141,14 +153,10 @@ func NewToolResultJSON(jsonBytes []byte) *CallToolResult {
 	}
 }
 
-// NewToolResultBinary creates a successful result that carries raw bytes from
-// a non-JSON response. The bytes are base64-encoded into Text (so log-style
-// clients see something legible) and surface as a structured object
-// {"contentType": ..., "base64": ...} for clients that consume
-// StructuredContent. Useful for application/octet-stream, application/xml,
-// or any other response content type that doesn't naturally decode to JSON.
-// For image/audio payloads prefer NewToolResultImage / NewToolResultAudio,
-// which surface as native MCP content blocks that clients can render.
+// NewToolResultBinary creates a backwards-compatible base64 text envelope for
+// callers that explicitly need one. Generated handlers use
+// NewToolResultResource for generic binary HTTP responses instead, so modern
+// MCP clients receive an embedded blob resource without a duplicate payload.
 func NewToolResultBinary(raw []byte, contentType string) *CallToolResult {
 	encoded := base64.StdEncoding.EncodeToString(raw)
 	return &CallToolResult{
@@ -181,6 +189,20 @@ func NewToolResultAudio(raw []byte, mimeType string) *CallToolResult {
 	return &CallToolResult{Binary: raw, MediaKind: MediaAudio, MIMEType: mimeType}
 }
 
+// NewToolResultResource creates an embedded blob resource result for a binary
+// response that has no dedicated MCP content type. The URI is an opaque,
+// content-addressed URN; clients receive the bytes in the same result and do
+// not need (or get) a network location for the upstream response.
+func NewToolResultResource(raw []byte, mimeType string) *CallToolResult {
+	digest := sha256.Sum256(raw)
+	return &CallToolResult{
+		Binary:      raw,
+		MediaKind:   MediaResource,
+		MIMEType:    mimeType,
+		ResourceURI: "urn:openapi-go-mcp:response:sha256:" + fmt.Sprintf("%x", digest[:]),
+	}
+}
+
 // NewToolResultError creates an error text result.
 func NewToolResultError(text string) *CallToolResult {
 	return &CallToolResult{Text: text, IsError: true}
@@ -198,9 +220,9 @@ func NewToolResultError(text string) *CallToolResult {
 //     native MCP ImageContent / AudioContent block (the shape
 //     NewToolResultImage / NewToolResultAudio produce) so clients can render
 //     it directly. No base64 text duplicate is emitted.
-//   - 2xx with any other Content-Type: body is surfaced as base64-encoded
-//     structured content matching NewToolResultBinary, except Headers/StatusCode
-//     are populated.
+//   - 2xx with any other Content-Type: body is surfaced as an embedded blob
+//     resource with an opaque content-addressed URN; Headers/StatusCode are
+//     still populated.
 //   - 2xx with an empty body (typical of 204 No Content): success result with
 //     no StructuredContent.
 //   - Non-2xx: IsError=true and StructuredContent is the envelope
@@ -256,16 +278,10 @@ func NewToolResultFromHTTP(status int, header http.Header, body []byte, fallback
 				Headers:    headers,
 			}
 		}
-		encoded := base64.StdEncoding.EncodeToString(body)
-		return &CallToolResult{
-			Text: encoded,
-			StructuredContent: map[string]any{
-				"contentType": ct,
-				"base64":      encoded,
-			},
-			StatusCode: status,
-			Headers:    headers,
-		}
+		resource := NewToolResultResource(body, mediaType)
+		resource.StatusCode = status
+		resource.Headers = headers
+		return resource
 	}
 
 	// Non-2xx: render as an error envelope so the LLM can branch on it.
@@ -344,6 +360,9 @@ func selectResponseHeaders(h http.Header) map[string]string {
 			continue
 		}
 		lower := strings.ToLower(k)
+		if sensitiveResponseHeader(lower) {
+			continue
+		}
 		_, allowed := allowedResponseHeaders[lower]
 		if !allowed {
 			if !strings.HasPrefix(lower, "x-") || xCount >= maxExtraXHeaders {
@@ -361,6 +380,13 @@ func selectResponseHeaders(h http.Header) map[string]string {
 		out[k] = val
 	}
 	return out
+}
+
+func sensitiveResponseHeader(name string) bool {
+	return strings.Contains(name, "authorization") || strings.Contains(name, "api-key") ||
+		strings.Contains(name, "apikey") || strings.Contains(name, "token") ||
+		strings.Contains(name, "secret") || strings.Contains(name, "credential") ||
+		strings.Contains(name, "cookie")
 }
 
 // contentClass labels a response body's content-type for NewToolResultFromHTTP's

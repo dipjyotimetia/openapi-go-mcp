@@ -21,9 +21,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ todos.ClientWithResponsesInterface = (todos.ClientWithResponsesInterface)(nil)
 
-// RegisterTodosAPIClient registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// RegisterTodosAPIClient registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterTodosAPIClientWithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// RegisterTodosAPIClientOpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func RegisterTodosAPIClientOpenAI(s runtime.MCPServer, c todos.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterTodosAPIClientWithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// RegisterTodosAPIClientWithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func RegisterTodosAPIClientWithProvider(s runtime.MCPServer, c todos.ClientWithResponsesInterface, provider runtime.LLMProvider, opts ...runtime.Option) {
+
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -32,10 +45,11 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// GET /todos
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "listTodos",
-			Description:    "List todos\n\nReturns todos, optionally filtered by completion status.",
-			RawInputSchema: json.RawMessage(input_listTodos),
-			Annotations:    &runtime.ToolAnnotations{Title: "List todos", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "listTodos",
+			Description:       "List todos\n\nReturns todos, optionally filtered by completion status.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_listTodos, input_openai_listTodos),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "List todos", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -50,7 +64,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			}
 			resp, err := c.ListTodosWithResponse(ctx, &params)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -67,11 +81,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// POST /todos
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "createTodo",
-			Description:     "Create a todo",
-			RawInputSchema:  json.RawMessage(input_createTodo),
-			RawOutputSchema: json.RawMessage(output_createTodo),
-			Annotations:     &runtime.ToolAnnotations{Title: "Create a todo"},
+			Name:              "createTodo",
+			Description:       "Create a todo",
+			RawInputSchema:    inputSchemaForProvider(provider, input_createTodo, input_openai_createTodo),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_createTodo),
+			Annotations:       &runtime.ToolAnnotations{Title: "Create a todo"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -86,7 +101,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			}
 			resp, err := c.CreateTodoWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -103,10 +118,11 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// DELETE /todos/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "deleteTodo",
-			Description:    "Delete a todo",
-			RawInputSchema: json.RawMessage(input_deleteTodo),
-			Annotations:    &runtime.ToolAnnotations{Title: "Delete a todo", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
+			Name:              "deleteTodo",
+			Description:       "Delete a todo",
+			RawInputSchema:    inputSchemaForProvider(provider, input_deleteTodo, input_openai_deleteTodo),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Delete a todo", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -121,7 +137,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			}
 			resp, err := c.DeleteTodoWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -138,11 +154,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// GET /todos/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getTodo",
-			Description:     "Get a todo by ID",
-			RawInputSchema:  json.RawMessage(input_getTodo),
-			RawOutputSchema: json.RawMessage(output_getTodo),
-			Annotations:     &runtime.ToolAnnotations{Title: "Get a todo by ID", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getTodo",
+			Description:       "Get a todo by ID",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getTodo, input_openai_getTodo),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getTodo),
+			Annotations:       &runtime.ToolAnnotations{Title: "Get a todo by ID", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -157,7 +174,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			}
 			resp, err := c.GetTodoWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -174,11 +191,12 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 	// PUT /todos/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "updateTodo",
-			Description:     "Update a todo\n\nPartially update a todo. Omitted fields are left unchanged.",
-			RawInputSchema:  json.RawMessage(input_updateTodo),
-			RawOutputSchema: json.RawMessage(output_updateTodo),
-			Annotations:     &runtime.ToolAnnotations{Title: "Update a todo", IdempotentHint: true},
+			Name:              "updateTodo",
+			Description:       "Update a todo\n\nPartially update a todo. Omitted fields are left unchanged.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_updateTodo, input_openai_updateTodo),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_updateTodo),
+			Annotations:       &runtime.ToolAnnotations{Title: "Update a todo", IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -197,7 +215,7 @@ func RegisterTodosAPIClient(s runtime.MCPServer, c todos.ClientWithResponsesInte
 			}
 			resp, err := c.UpdateTodoWithResponse(ctx, id, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -224,6 +242,15 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+
 const input_listTodos = `{
   "properties": {
     "query": {
@@ -243,6 +270,46 @@ const input_listTodos = `{
       "type": "object"
     }
   },
+  "type": "object"
+}`
+
+const input_openai_listTodos = `{
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "description": "When set, only return todos with the matching completion state.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Maximum number of todos to return (1-100).",
+          "format": "int32",
+          "maximum": 100,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "completed",
+        "limit"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "query"
+  ],
   "type": "object"
 }`
 
@@ -268,6 +335,37 @@ const input_createTodo = `{
   "properties": {
     "body": {
       "$ref": "#/$defs/NewTodo"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_createTodo = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "default": false,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "completed",
+        "title"
+      ],
+      "type": "object"
     }
   },
   "required": [
@@ -339,9 +437,57 @@ const input_deleteTodo = `{
   "type": "object"
 }`
 
+const input_openai_deleteTodo = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Numeric identifier of the todo.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
 const input_getTodo = `{
   "properties": {
     "path": {
+      "properties": {
+        "id": {
+          "description": "Numeric identifier of the todo.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getTodo = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
       "properties": {
         "id": {
           "description": "Numeric identifier of the todo.",
@@ -438,6 +584,54 @@ const input_updateTodo = `{
   "required": [
     "path",
     "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_updateTodo = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "title": {
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "completed",
+        "title"
+      ],
+      "type": "object"
+    },
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Numeric identifier of the todo.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body",
+    "path"
   ],
   "type": "object"
 }`

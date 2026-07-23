@@ -9,13 +9,63 @@
 package mark3labs
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
+
+func TestCallTool_RejectsInvalidSchemaArgumentsBeforeHandler(t *testing.T) {
+	schema := json.RawMessage(`{
+		"type": "object",
+		"properties": {"name": {"$ref": "#/$defs/name"}},
+		"required": ["name"],
+		"additionalProperties": false,
+		"$defs": {"name": {"type": "string"}}
+	}`)
+	validator := runtime.CompileInputValidator(schema)
+	var calls atomic.Int32
+	handler := func(context.Context, *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+		calls.Add(1)
+		return runtime.NewToolResultText("handler should not run"), nil
+	}
+
+	for _, args := range []any{
+		map[string]any{},
+		map[string]any{"name": 7},
+		map[string]any{"name": "ok", "extra": true},
+	} {
+		result, err := callTool(context.Background(), validator, handler, args)
+		if err != nil {
+			t.Fatalf("callTool(%v): %v", args, err)
+		}
+		if !result.IsError {
+			t.Errorf("callTool(%v) IsError = false, want true", args)
+		}
+		text, ok := result.Content[0].(mcp.TextContent)
+		if !ok {
+			t.Fatalf("callTool(%v) content = %T, want mcp.TextContent", args, result.Content[0])
+		}
+		if text.Text == "" {
+			t.Errorf("callTool(%v) returned an empty validation error", args)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(text.Text), &payload); err != nil {
+			t.Fatalf("callTool(%v) error is not JSON: %v", args, err)
+		}
+		if payload["code"] != "invalid_arguments" {
+			t.Errorf("callTool(%v) error code = %v, want invalid_arguments", args, payload["code"])
+		}
+	}
+	if got := calls.Load(); got != 0 {
+		t.Errorf("handler calls = %d, want 0", got)
+	}
+}
 
 func TestToMCPResult_ImageMedia(t *testing.T) {
 	raw := []byte{0x89, 'P', 'N', 'G'}
@@ -50,6 +100,50 @@ func TestToMCPResult_AudioMedia(t *testing.T) {
 	}
 	if want := base64.StdEncoding.EncodeToString(raw); aud.Data != want || aud.MIMEType != "audio/mpeg" || aud.Type != "audio" {
 		t.Errorf("unexpected audio block: %+v", aud)
+	}
+}
+
+func TestToMCPResult_EmbeddedResource(t *testing.T) {
+	raw := []byte("%PDF")
+	res := toMCPResult(runtime.NewToolResultResource(raw, "application/pdf"))
+	resource, ok := res.Content[0].(mcp.EmbeddedResource)
+	if !ok {
+		t.Fatalf("content block = %#v", res.Content[0])
+	}
+	blob, ok := resource.Resource.(mcp.BlobResourceContents)
+	if !ok {
+		t.Fatalf("resource = %T", resource.Resource)
+	}
+	if blob.Blob != base64.StdEncoding.EncodeToString(raw) || blob.MIMEType != "application/pdf" || blob.URI == "" {
+		t.Errorf("blob = %#v", blob)
+	}
+}
+
+func TestToMCPResult_EmbeddedResourceWireShape(t *testing.T) {
+	raw := []byte("%PDF")
+	encoded, err := json.Marshal(toMCPResult(runtime.NewToolResultResource(raw, "application/pdf")))
+	if err != nil {
+		t.Fatalf("marshal tool result: %v", err)
+	}
+	var wire struct {
+		Content []struct {
+			Type     string `json:"type"`
+			Resource struct {
+				URI      string `json:"uri"`
+				MIMEType string `json:"mimeType"`
+				Blob     string `json:"blob"`
+			} `json:"resource"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("unmarshal wire result: %v", err)
+	}
+	if len(wire.Content) != 1 || wire.Content[0].Type != "resource" {
+		t.Fatalf("unexpected resource wire envelope: %s", encoded)
+	}
+	resource := wire.Content[0].Resource
+	if resource.URI == "" || resource.MIMEType != "application/pdf" || resource.Blob != base64.StdEncoding.EncodeToString(raw) {
+		t.Errorf("unexpected embedded resource wire content: %+v", resource)
 	}
 }
 

@@ -33,14 +33,22 @@ const (
 	SecurityHTTPBearer SecurityKind = "httpBearer"
 	// SecurityHTTPBasic is type=http + scheme=basic.
 	SecurityHTTPBasic SecurityKind = "httpBasic"
-	// SecurityOAuth2 is type=oauth2; treated as Bearer-from-env at runtime.
+	// SecurityOAuth2 is type=oauth2. A supplied access token is used directly;
+	// a clientCredentials flow can also acquire and refresh one at runtime.
 	SecurityOAuth2 SecurityKind = "oauth2"
+	// SecurityMTLS is OpenAPI 3.1 type=mutualTLS. The proxy requires a
+	// caller-provided mTLS-capable HTTP client before it sends a request.
+	SecurityMTLS SecurityKind = "mtls"
+	// SecurityCustom delegates authentication to runtime.RequestAuthProvider.
+	// It is used for OpenID Connect and the common aws4-hmac-sha256 HTTP
+	// scheme, where the deployment owns credential acquisition/signing.
+	SecurityCustom SecurityKind = "custom"
 )
 
 // SecurityScheme is the generator's lowered view of one OpenAPI security
 // scheme. Only fields the proxy template actually needs are populated;
-// kin-openapi's full struct (Flows, OpenIdConnectUrl, BearerFormat) is
-// ignored because proxy mode does no token exchange.
+// kin-openapi's full struct is intentionally narrowed to what generated
+// proxy handlers can apply without binding to a cloud-specific SDK.
 type SecurityScheme struct {
 	// Name is the spec's key under components.securitySchemes (e.g. "bearerAuth").
 	Name string
@@ -60,6 +68,16 @@ type SecurityScheme struct {
 	// UsernameEnvVar and PasswordEnvVar are only populated for httpBasic.
 	UsernameEnvVar string
 	PasswordEnvVar string
+	// ClientIDEnvVar and ClientSecretEnvVar are populated for OAuth 2.0
+	// client-credentials flows. EnvVar remains the optional pre-acquired token.
+	ClientIDEnvVar     string
+	ClientSecretEnvVar string
+	OAuthTokenURL      string
+	// OAuthScopes contains the scopes advertised by the client-credentials
+	// flow. OAuthRequestScopes is the operation-specific subset selected by
+	// its OpenAPI Security Requirement.
+	OAuthScopes        []string
+	OAuthRequestScopes []string
 }
 
 // ParseSecuritySchemes walks doc.Components.SecuritySchemes and returns a
@@ -146,6 +164,9 @@ func classifySecurityScheme(name string, ss *openapi3.SecurityScheme, sink *diag
 				PasswordEnvVar: "BASIC_AUTH_PASSWORD_" + envBase,
 			}, true
 		default:
+			if scheme == "aws4-hmac-sha256" {
+				return SecurityScheme{Name: name, Kind: SecurityCustom}, true
+			}
 			if sink != nil {
 				sink.warn(DiagUnsupportedSecurityScheme,
 					"#/components/securitySchemes/"+name,
@@ -154,21 +175,26 @@ func classifySecurityScheme(name string, ss *openapi3.SecurityScheme, sink *diag
 			return SecurityScheme{}, false
 		}
 	case "oauth2":
-		// We don't perform any OAuth2 flow; we treat oauth2 schemes as a
-		// pre-acquired Bearer token the user supplies via env var. A note
-		// in the README spells this out so users aren't surprised.
-		return SecurityScheme{
+		out := SecurityScheme{
 			Name:   name,
 			Kind:   SecurityOAuth2,
 			EnvVar: "OAUTH2_ACCESS_TOKEN_" + envBase,
-		}, true
-	case "openidconnect":
-		if sink != nil {
-			sink.warn(DiagUnsupportedSecurityScheme,
-				"#/components/securitySchemes/"+name,
-				"openIdConnect schemes are not yet supported; auth wiring skipped (the spec consumer must inject the bearer token via a custom HTTP client)")
 		}
-		return SecurityScheme{}, false
+		if ss.Flows != nil && ss.Flows.ClientCredentials != nil && ss.Flows.ClientCredentials.TokenURL != "" {
+			flow := ss.Flows.ClientCredentials
+			out.ClientIDEnvVar = "OAUTH2_CLIENT_ID_" + envBase
+			out.ClientSecretEnvVar = "OAUTH2_CLIENT_SECRET_" + envBase
+			out.OAuthTokenURL = flow.TokenURL
+			for scope := range flow.Scopes {
+				out.OAuthScopes = append(out.OAuthScopes, scope)
+			}
+			sort.Strings(out.OAuthScopes)
+		}
+		return out, true
+	case "openidconnect":
+		return SecurityScheme{Name: name, Kind: SecurityCustom}, true
+	case "mutualtls":
+		return SecurityScheme{Name: name, Kind: SecurityMTLS}, true
 	default:
 		if sink != nil {
 			sink.warn(DiagUnsupportedSecurityScheme,
@@ -215,7 +241,17 @@ func deriveEnvVar(name string) string {
 	return s
 }
 
-// ResolveOperationSecurity returns the security schemes that apply to one
+// SecurityPolicy is the proxy-mode authentication contract for one operation.
+// Alternatives preserves OpenAPI's outer OR semantics; each inner slice is
+// an AND requirement. Required remains true when the source declared security
+// but no supported alternative could be produced, ensuring callers fail closed.
+type SecurityPolicy struct {
+	Alternatives [][]SecurityScheme
+	Anonymous    bool
+	Required     bool
+}
+
+// ResolveSecurityPolicy returns the security policy that applies to one
 // operation. OpenAPI precedence: an operation-level `security` (even if
 // empty []) overrides the document-level `security`; a missing
 // op.Security falls back to doc.Security.
@@ -226,29 +262,29 @@ func deriveEnvVar(name string) string {
 // to skip auth entirely.
 //
 // Within a non-empty requirement list, OpenAPI says "either of these
-// requirements is sufficient". Proxy mode picks the first requirement
-// that references only schemes we successfully parsed — anything else
-// would require user code at runtime to choose. This is documented in
-// design-decisions §14.
-func ResolveOperationSecurity(op *openapi3.Operation, doc *openapi3.T, parsed []SecurityScheme) (schemes []SecurityScheme, anonymous bool) {
+// requirements is sufficient". Every fully supported alternative is retained
+// so generated code can choose based on credentials available at call time.
+func ResolveSecurityPolicy(op *openapi3.Operation, doc *openapi3.T, parsed []SecurityScheme) SecurityPolicy {
 	reqs := operationSecurityRequirements(op, doc)
 	if reqs == nil {
-		// No security at either level → effectively anonymous, but
-		// distinct from an explicit `security: []` — callers may still
-		// log a "no auth declared" advisory. We surface it the same way:
-		// no schemes, anonymous=true.
-		return nil, true
+		return SecurityPolicy{Anonymous: true}
+	}
+	// An explicitly empty security array overrides any document-level
+	// requirement and means the operation can be invoked anonymously.
+	if len(*reqs) == 0 {
+		return SecurityPolicy{Anonymous: true}
 	}
 
 	byName := make(map[string]SecurityScheme, len(parsed))
 	for _, s := range parsed {
 		byName[s.Name] = s
 	}
+	policy := SecurityPolicy{Required: true}
 
 	for _, req := range *reqs {
 		if len(req) == 0 {
 			// Empty SecurityRequirement object means anonymous.
-			return nil, true
+			return SecurityPolicy{Anonymous: true}
 		}
 		picked := make([]SecurityScheme, 0, len(req))
 		complete := true
@@ -263,16 +299,29 @@ func ResolveOperationSecurity(op *openapi3.Operation, doc *openapi3.T, parsed []
 				complete = false
 				break
 			}
+			if s.Kind == SecurityOAuth2 && s.OAuthTokenURL != "" {
+				s.OAuthRequestScopes = append([]string(nil), req[n]...)
+				sort.Strings(s.OAuthRequestScopes)
+			}
 			picked = append(picked, s)
 		}
 		if complete {
-			return picked, false
+			policy.Alternatives = append(policy.Alternatives, picked)
 		}
 	}
-	// No requirement could be fully satisfied. Fall back to anonymous so
-	// the proxy still generates a callable handler — the upstream will
-	// 401 and the user will see a real error rather than silent failure.
-	return nil, true
+	return policy
+}
+
+// ResolveOperationSecurity is retained for callers compiled against the
+// pre-v1.0 generator API. It returns the first supported alternative; proxy
+// generation itself uses ResolveSecurityPolicy and therefore preserves all
+// alternatives at runtime.
+func ResolveOperationSecurity(op *openapi3.Operation, doc *openapi3.T, parsed []SecurityScheme) ([]SecurityScheme, bool) {
+	policy := ResolveSecurityPolicy(op, doc, parsed)
+	if len(policy.Alternatives) == 0 {
+		return nil, policy.Anonymous
+	}
+	return policy.Alternatives[0], policy.Anonymous
 }
 
 // operationSecurityRequirements returns the effective SecurityRequirements

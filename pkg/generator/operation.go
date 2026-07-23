@@ -136,6 +136,10 @@ type Operation struct {
 	ResponseContentType string
 	// InputSchemaJSON is the encoded JSON Schema for the tool's input.
 	InputSchemaJSON string
+	// InputSchemaOpenAIJSON is the OpenAI-compatible form of InputSchemaJSON.
+	// It is populated alongside the default schema unless OpenAICompat was
+	// explicitly requested, which preserves the legacy single-schema output.
+	InputSchemaOpenAIJSON string
 	// OutputSchemaJSON is the encoded JSON Schema for the tool's output,
 	// lowered from the operation's selected 2xx JSON response schema. Empty
 	// when the response is not JSON or its root is not an object (MCP output
@@ -143,16 +147,19 @@ type Operation struct {
 	// only — error results (IsError=true) carry the runtime's
 	// {"status","headers","body"} envelope instead.
 	OutputSchemaJSON string
-	// Security lists the security schemes the proxy template should
-	// apply to this operation. Populated only in ModeProxy; companion
-	// mode leaves the slice nil. Empty + Anonymous=true means "no auth";
-	// nil + Anonymous=false should not occur.
-	Security []SecurityScheme
+	// Security lists the OpenAPI security alternatives (OR) and schemes
+	// within each alternative (AND) the proxy must satisfy. It is populated
+	// only in ModeProxy; companion mode leaves it nil.
+	Security [][]SecurityScheme
 	// Anonymous is true when the operation is explicitly callable without
 	// credentials (operation-level `security: [{}]` or no security
 	// declared anywhere). Proxy template uses this to skip auth wiring
 	// entirely rather than producing a "credential not set" error.
 	Anonymous bool
+	// AuthRequired distinguishes an absent/explicitly anonymous security
+	// declaration from a protected operation whose declared schemes could not
+	// be lowered. The latter must fail closed at call time.
+	AuthRequired bool
 }
 
 // ParamField is a single OpenAPI parameter described enough to render Go code
@@ -163,7 +170,13 @@ type ParamField struct {
 	GoType       string // Go type, e.g. "int64", "openapi_types.UUID"
 	GoTypeImport string // import path required for GoType (empty for builtins)
 	Required     bool
-	Schema       *openapi3.SchemaRef // original parameter schema, used to build the input schema
+	// Style, Explode, and AllowReserved are the wire-format metadata used by
+	// proxy mode. Style and Explode are resolved to their OpenAPI defaults
+	// while collecting the operation, so templates never need to infer them.
+	Style         string
+	Explode       bool
+	AllowReserved bool
+	Schema        *openapi3.SchemaRef // original parameter schema, used to build the input schema
 	// Description/Example/Deprecated carry Parameter-object-level metadata
 	// (as opposed to metadata on the parameter's schema). Merged into the
 	// tool input schema when the schema itself doesn't already declare the
@@ -247,7 +260,19 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 				return nil, sink.finalize(), fmt.Errorf("%s %s: %w", method, path, err)
 			}
 			if opts.Mode == ModeProxy {
-				op.Security, op.Anonymous = ResolveOperationSecurity(specOp, doc, parsedSchemes)
+				policy := ResolveSecurityPolicy(specOp, doc, parsedSchemes)
+				op.Security = policy.Alternatives
+				op.Anonymous = policy.Anonymous
+				op.AuthRequired = policy.Required
+			}
+			if !opts.OpenAICompat {
+				openAIConv := NewSchemaConverter(true)
+				openAIConv.Adopt(nameByPtr)
+				openAISchema, _, err := buildInputSchema(op, openAIConv)
+				if err != nil {
+					return nil, sink.finalize(), fmt.Errorf("%s %s: build OpenAI input schema: %w", method, path, err)
+				}
+				op.InputSchemaOpenAIJSON = openAISchema
 			}
 			ops = append(ops, op)
 		}
@@ -361,13 +386,13 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		f := paramFieldFromSpec(name, p, true)
 		f.GoVar = pathGoVar(f.GoVar)
 		out.PathParams = append(out.PathParams, f)
-		if p != nil {
+		if p != nil && opts.Mode == ModeProxy {
 			emitParameterStyleDiagnostic(p, opPath, sink)
 		}
 	}
-	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink)
-	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink)
-	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink)
+	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink, opts.Mode == ModeProxy)
+	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink, opts.Mode == ModeProxy)
+	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink, opts.Mode == ModeProxy)
 	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
 
 	if len(op.Callbacks) > 0 {
@@ -671,9 +696,9 @@ func collectParams(in map[string]*openapi3.Parameter) []ParamField {
 // collectParamsWithDiagnostics is collectParams plus per-parameter style/explode
 // diagnostics. Kept as a separate path so callers that don't want
 // diagnostics (tests, future tooling) can still call collectParams cheaply.
-func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath string, sink *diagSink) []ParamField {
+func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath string, sink *diagSink, proxyMode bool) []ParamField {
 	out := collectParams(in)
-	if sink == nil {
+	if sink == nil || !proxyMode {
 		return out
 	}
 	// Walk in deterministic (name) order so diagnostic emission is stable.
@@ -689,25 +714,44 @@ func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath stri
 }
 
 // supportedParameterStyles enumerates the OpenAPI parameter `style` values
-// the runtime+oapi-codegen pipeline handles correctly today. Other styles
-// (deepObject, matrix, label, spaceDelimited, pipeDelimited) generate code
-// that may not match the spec's wire encoding; emit a diagnostic so the user
-// knows their spec was parsed but the encoding may differ.
+// supported by proxy mode's OpenAPI-aware serializer. A style may still be
+// invalid for a particular parameter location; runtime validation returns a
+// clear tool error in that case instead of silently changing the wire format.
 var supportedParameterStyles = map[string]struct{}{
-	"":       {}, // default
-	"form":   {},
-	"simple": {},
+	"":               {}, // default
+	"form":           {},
+	"simple":         {},
+	"label":          {},
+	"matrix":         {},
+	"spaceDelimited": {},
+	"pipeDelimited":  {},
+	"deepObject":     {},
 }
 
 func emitParameterStyleDiagnostic(p *openapi3.Parameter, opPath string, sink *diagSink) {
 	if p == nil || sink == nil {
 		return
 	}
-	if _, ok := supportedParameterStyles[p.Style]; ok {
-		return
+	style := parameterStyle(p)
+	if _, ok := supportedParameterStyles[style]; !ok || !styleAllowedAtLocation(style, p.In) || (style == "deepObject" && !parameterExplode(p, style)) {
+		sink.warn(DiagUnsupportedParameterStyle, opPath,
+			fmt.Sprintf("parameter %q (in=%s) uses style=%q / explode=%t which proxy mode cannot serialize", p.Name, p.In, style, parameterExplode(p, style)))
 	}
-	sink.warn(DiagUnsupportedParameterStyle, opPath,
-		fmt.Sprintf("parameter %q (in=%s) uses style=%q which is not lowered by the generator; wire encoding may diverge from the spec", p.Name, p.In, p.Style))
+}
+
+func styleAllowedAtLocation(style, location string) bool {
+	switch location {
+	case inPath:
+		return style == "simple" || style == "label" || style == "matrix"
+	case inQuery:
+		return style == "form" || style == "spaceDelimited" || style == "pipeDelimited" || style == "deepObject"
+	case inHeader:
+		return style == "simple"
+	case inCookie:
+		return style == "form"
+	default:
+		return false
+	}
 }
 
 // mergeParametersWithShadowWarning concatenates pathItem-level + operation-
@@ -768,8 +812,36 @@ func paramFieldFromSpec(name string, p *openapi3.Parameter, required bool) Param
 		f.Description = p.Description
 		f.Example = p.Example
 		f.Deprecated = p.Deprecated
+		f.Style = parameterStyle(p)
+		f.Explode = parameterExplode(p, f.Style)
+		f.AllowReserved = p.AllowReserved
 	}
 	return f
+}
+
+func parameterStyle(p *openapi3.Parameter) string {
+	if p == nil {
+		return "form"
+	}
+	if p.Style != "" {
+		return p.Style
+	}
+	switch p.In {
+	case inPath, inHeader:
+		return "simple"
+	case inQuery, inCookie:
+		return "form"
+	default:
+		return "form"
+	}
+}
+
+func parameterExplode(p *openapi3.Parameter, style string) bool {
+	if p != nil && p.Explode != nil {
+		return *p.Explode
+	}
+	// form is the sole style with an explode=true default.
+	return style == "form"
 }
 
 // pickRequestContent chooses the request content-type for an operation that
@@ -1050,7 +1122,7 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		root["required"] = required
 	}
 	if conv.OpenAICompat {
-		root["additionalProperties"] = false
+		enforceOpenAIStrictObjects(root)
 	}
 	if defs := conv.Defs(); len(defs) > 0 {
 		root["$defs"] = defs
@@ -1061,6 +1133,87 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		return "", nil, fmt.Errorf("marshal input schema: %w", err)
 	}
 	return string(buf), fileFields, nil
+}
+
+// enforceOpenAIStrictObjects applies the constraints OpenAI's strict tool
+// schema dialect imposes beyond ordinary JSON Schema: every declared object
+// property must be listed in required and objects must reject undeclared
+// properties. OpenAPI optional properties remain optional in meaning by being
+// made nullable, which lets a strict caller send null as the absence marker.
+//
+// It runs after the complete input envelope has been assembled so it covers
+// both converted OpenAPI schemas and synthetic path/query/header groups.
+func enforceOpenAIStrictObjects(node any) {
+	switch value := node.(type) {
+	case map[string]any:
+		props, hasProps := value["properties"].(map[string]any)
+		if hasProps {
+			required := requiredPropertyNames(value["required"])
+			names := make([]string, 0, len(props))
+			for name := range props {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				if !required[name] {
+					makeSchemaNullable(props[name])
+					required[name] = true
+				}
+			}
+			value["required"] = names
+			value["additionalProperties"] = false
+		}
+		for _, child := range value {
+			enforceOpenAIStrictObjects(child)
+		}
+	case []any:
+		for _, child := range value {
+			enforceOpenAIStrictObjects(child)
+		}
+	}
+}
+
+func requiredPropertyNames(raw any) map[string]bool {
+	set := map[string]bool{}
+	names, _ := raw.([]any)
+	for _, name := range names {
+		if s, ok := name.(string); ok {
+			set[s] = true
+		}
+	}
+	return set
+}
+
+func makeSchemaNullable(raw any) {
+	schema, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	switch typ := schema["type"].(type) {
+	case string:
+		if typ != "null" {
+			schema["type"] = []any{typ, "null"}
+		}
+	case []any:
+		hasNull := false
+		for _, candidate := range typ {
+			if candidate == "null" {
+				hasNull = true
+				break
+			}
+		}
+		if !hasNull {
+			schema["type"] = append(typ, "null")
+		}
+	}
+	if enum, ok := schema["enum"].([]any); ok {
+		for _, value := range enum {
+			if value == nil {
+				return
+			}
+		}
+		schema["enum"] = append(enum, nil)
+	}
 }
 
 // mergeParamMetadata copies Parameter-object-level description / example /

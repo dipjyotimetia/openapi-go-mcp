@@ -1,6 +1,7 @@
 # Binaries
 /bin/
 /dist/
+/.worktrees/
 
 # Test artefacts
 *.test

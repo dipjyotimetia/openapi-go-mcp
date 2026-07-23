@@ -234,6 +234,11 @@ func runProxyToolCall(t *testing.T, spec string, env []string, requests []string
 	if err != nil {
 		t.Fatalf("scaffold build: %v", err)
 	}
+	// The harness upstream is intentionally a local HTTP test server. The
+	// generated scaffold defaults credential-bearing calls to HTTPS, so make
+	// this test-only exception explicit rather than weakening the production
+	// default.
+	env = append(env, "ALLOW_INSECURE_AUTH=1")
 	return stdioRoundTrip(t, bin, env, requests, 20*time.Second)
 }
 

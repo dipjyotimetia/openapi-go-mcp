@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 )
 
 // ToolError represents an MCP tool error that should be surfaced as a tool
@@ -70,4 +71,14 @@ func HandleError(err error) (*CallToolResult, error) {
 		return NewToolResultError(fallback), nil
 	}
 	return NewToolResultError(string(body)), nil
+}
+
+// SanitizeUpstreamError converts a transport failure into a stable MCP error
+// without exposing the request URL. net/http errors often include the full
+// URL, whose query string can contain API keys added by OpenAPI security.
+func SanitizeUpstreamError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ToolError{Status: http.StatusBadGateway, Code: "upstream_request_failed", Message: "upstream request failed", Cause: err}
 }

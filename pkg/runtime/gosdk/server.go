@@ -39,6 +39,7 @@ func NewServer(name, version string) (*mcp.Server, runtime.MCPServer) {
 }
 
 func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
+	validator := runtime.CompileInputValidator(tool.RawInputSchema)
 	mt := &mcp.Tool{
 		Name:        tool.Name,
 		Description: tool.Description,
@@ -58,25 +59,33 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 	}
 
 	a.s.AddTool(mt, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, err := runtime.DecodeArguments(req.Params.Arguments)
-		if err != nil {
-			// Mirror the mark3labs path: malformed input becomes an
-			// IsError tool result so the LLM can self-correct instead of
-			// the transport surfacing a protocol error the client may not
-			// surface back.
-			toolResult, _ := runtime.HandleError(err)
-			return toMCPResult(toolResult), nil
-		}
-
-		result, err := handler(ctx, &runtime.CallToolRequest{Arguments: args})
-		if err != nil {
-			return nil, err
-		}
-		if result == nil {
-			return nil, nil
-		}
-		return toMCPResult(result), nil
+		return callTool(ctx, validator, handler, req.Params.Arguments)
 	})
+}
+
+func callTool(ctx context.Context, validator *runtime.InputValidator, handler runtime.ToolHandler, rawArguments []byte) (*mcp.CallToolResult, error) {
+	args, err := runtime.DecodeArguments(rawArguments)
+	if err != nil {
+		// Mirror the mark3labs path: malformed input becomes an
+		// IsError tool result so the LLM can self-correct instead of
+		// the transport surfacing a protocol error the client may not
+		// surface back.
+		toolResult, _ := runtime.HandleError(err)
+		return toMCPResult(toolResult), nil
+	}
+	if err := validator.Validate(args); err != nil {
+		toolResult, _ := runtime.HandleError(err)
+		return toMCPResult(toolResult), nil
+	}
+
+	result, err := handler(ctx, &runtime.CallToolRequest{Arguments: args})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return toMCPResult(result), nil
 }
 
 func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
@@ -92,6 +101,8 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 		content = []mcp.Content{&mcp.ImageContent{Data: result.Binary, MIMEType: result.MIMEType}}
 	case runtime.MediaAudio:
 		content = []mcp.Content{&mcp.AudioContent{Data: result.Binary, MIMEType: result.MIMEType}}
+	case runtime.MediaResource:
+		content = []mcp.Content{&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{URI: result.ResourceURI, MIMEType: result.MIMEType, Blob: result.Binary}}}
 	default:
 		content = []mcp.Content{&mcp.TextContent{Text: result.Text}}
 	}

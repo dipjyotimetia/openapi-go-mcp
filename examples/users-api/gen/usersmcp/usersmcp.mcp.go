@@ -22,9 +22,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ users.ClientWithResponsesInterface = (users.ClientWithResponsesInterface)(nil)
 
-// RegisterUsersAPIClient registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// RegisterUsersAPIClient registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterUsersAPIClientWithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// RegisterUsersAPIClientOpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func RegisterUsersAPIClientOpenAI(s runtime.MCPServer, c users.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterUsersAPIClientWithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// RegisterUsersAPIClientWithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func RegisterUsersAPIClientWithProvider(s runtime.MCPServer, c users.ClientWithResponsesInterface, provider runtime.LLMProvider, opts ...runtime.Option) {
+
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -33,11 +46,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /health
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getHealth",
-			Description:     "Health check (no params)",
-			RawInputSchema:  json.RawMessage(input_getHealth),
-			RawOutputSchema: json.RawMessage(output_getHealth),
-			Annotations:     &runtime.ToolAnnotations{Title: "Health check (no params)", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getHealth",
+			Description:       "Health check (no params)",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getHealth, input_openai_getHealth),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getHealth),
+			Annotations:       &runtime.ToolAnnotations{Title: "Health check (no params)", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -48,7 +62,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.GetHealthWithResponse(ctx)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -65,10 +79,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /users
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "listUsers",
-			Description:    "List users",
-			RawInputSchema: json.RawMessage(input_listUsers),
-			Annotations:    &runtime.ToolAnnotations{Title: "List users", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "listUsers",
+			Description:       "List users",
+			RawInputSchema:    inputSchemaForProvider(provider, input_listUsers, input_openai_listUsers),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "List users", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -83,7 +98,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.ListUsersWithResponse(ctx, &params)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -100,10 +115,11 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// DELETE /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "deleteUser",
-			Description:    "Delete user",
-			RawInputSchema: json.RawMessage(input_deleteUser),
-			Annotations:    &runtime.ToolAnnotations{Title: "Delete user", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
+			Name:              "deleteUser",
+			Description:       "Delete user",
+			RawInputSchema:    inputSchemaForProvider(provider, input_deleteUser, input_openai_deleteUser),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Delete user", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -118,7 +134,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.DeleteUserWithResponse(ctx, userId)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -135,11 +151,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getUser",
-			Description:     "Get user",
-			RawInputSchema:  json.RawMessage(input_getUser),
-			RawOutputSchema: json.RawMessage(output_getUser),
-			Annotations:     &runtime.ToolAnnotations{Title: "Get user", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getUser",
+			Description:       "Get user",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getUser, input_openai_getUser),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getUser),
+			Annotations:       &runtime.ToolAnnotations{Title: "Get user", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -154,7 +171,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.GetUserWithResponse(ctx, userId)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -171,11 +188,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// PATCH /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "patchUser",
-			Description:     "Partial update",
-			RawInputSchema:  json.RawMessage(input_patchUser),
-			RawOutputSchema: json.RawMessage(output_patchUser),
-			Annotations:     &runtime.ToolAnnotations{Title: "Partial update"},
+			Name:              "patchUser",
+			Description:       "Partial update",
+			RawInputSchema:    inputSchemaForProvider(provider, input_patchUser, input_openai_patchUser),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_patchUser),
+			Annotations:       &runtime.ToolAnnotations{Title: "Partial update"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -194,7 +212,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.PatchUserWithResponse(ctx, userId, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -211,11 +229,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// PUT /users/{userId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "replaceUser",
-			Description:     "Replace user",
-			RawInputSchema:  json.RawMessage(input_replaceUser),
-			RawOutputSchema: json.RawMessage(output_replaceUser),
-			Annotations:     &runtime.ToolAnnotations{Title: "Replace user", IdempotentHint: true},
+			Name:              "replaceUser",
+			Description:       "Replace user",
+			RawInputSchema:    inputSchemaForProvider(provider, input_replaceUser, input_openai_replaceUser),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_replaceUser),
+			Annotations:       &runtime.ToolAnnotations{Title: "Replace user", IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -238,7 +257,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.ReplaceUserWithResponse(ctx, userId, &params, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -255,11 +274,12 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 	// GET /users/{userId}/posts/{postId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getUserPost",
-			Description:     "Get post for user",
-			RawInputSchema:  json.RawMessage(input_getUserPost),
-			RawOutputSchema: json.RawMessage(output_getUserPost),
-			Annotations:     &runtime.ToolAnnotations{Title: "Get post for user", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getUserPost",
+			Description:       "Get post for user",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getUserPost, input_openai_getUserPost),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getUserPost),
+			Annotations:       &runtime.ToolAnnotations{Title: "Get post for user", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -278,7 +298,7 @@ func RegisterUsersAPIClient(s runtime.MCPServer, c users.ClientWithResponsesInte
 			}
 			resp, err := c.GetUserPostWithResponse(ctx, userId, postId)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -305,8 +325,24 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+
 const input_getHealth = `{
   "properties": {},
+  "type": "object"
+}`
+
+const input_openai_getHealth = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
   "type": "object"
 }`
 
@@ -353,6 +389,56 @@ const input_listUsers = `{
   "type": "object"
 }`
 
+const input_openai_listUsers = `{
+  "additionalProperties": false,
+  "properties": {
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "X-Tenant-Id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "X-Tenant-Id"
+      ],
+      "type": "object"
+    },
+    "query": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 20,
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cursor",
+        "limit"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "header",
+    "query"
+  ],
+  "type": "object"
+}`
+
 const input_deleteUser = `{
   "properties": {
     "path": {
@@ -374,9 +460,55 @@ const input_deleteUser = `{
   "type": "object"
 }`
 
+const input_openai_deleteUser = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
 const input_getUser = `{
   "properties": {
     "path": {
+      "properties": {
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getUser = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
       "properties": {
         "userId": {
           "format": "uuid",
@@ -486,6 +618,66 @@ const input_patchUser = `{
   "type": "object"
 }`
 
+const input_openai_patchUser = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "format": "email",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "enum": [
+            "admin",
+            "member",
+            "guest",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "email",
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body",
+    "path"
+  ],
+  "type": "object"
+}`
+
 const output_patchUser = `{
   "$defs": {
     "User": {
@@ -589,6 +781,79 @@ const input_replaceUser = `{
   "type": "object"
 }`
 
+const input_openai_replaceUser = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "format": "email",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "admin",
+            "member",
+            "guest",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "email",
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "If-Match": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "If-Match"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body",
+    "header",
+    "path"
+  ],
+  "type": "object"
+}`
+
 const output_replaceUser = `{
   "$defs": {
     "User": {
@@ -649,6 +914,34 @@ const input_getUserPost = `{
       "required": [
         "userId",
         "postId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getUserPost = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "postId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "postId",
+        "userId"
       ],
       "type": "object"
     }

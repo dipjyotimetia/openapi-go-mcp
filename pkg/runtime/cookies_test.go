@@ -82,3 +82,17 @@ func TestCookieRequestEditor_EmptyValuesMap(t *testing.T) {
 		t.Errorf("nil map should add no cookies, got %q", got)
 	}
 }
+
+func TestCookiePairsRequestEditor_PreservesRepeatedAndEmptyCookies(t *testing.T) {
+	editor := CookiePairsRequestEditor(CookiePairs{{Name: "tag", Value: "a"}, {Name: "tag", Value: "b"}, {Name: "empty", Value: ""}})
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := editor(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Header.Get("Cookie"); got != "tag=a; tag=b; empty=" {
+		t.Errorf("Cookie = %q", got)
+	}
+}

@@ -34,12 +34,13 @@ func TestRender_CookieParams_EndToEnd(t *testing.T) {
 	if !strings.Contains(string(src), `"cookie"`) {
 		t.Errorf("generated source must include a cookie input group:\n%s", src)
 	}
-	// 2. CookieRequestEditor and DecodeCookieParam must be wired in.
+	// 2. Cookies use the OpenAPI serializer so arrays and objects retain their
+	// form/explode wire semantics instead of being decoded as strings.
 	for _, want := range []string{
-		`runtime.CookieValues{}`,
-		`runtime.DecodeCookieParam(req.Arguments, "session"`,
-		`runtime.DecodeCookieParam(req.Arguments, "csrf"`,
-		`runtime.CookieRequestEditor(cookieValues)`,
+		`runtime.CookiePairs{}`,
+		`runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "session", In: "cookie"`,
+		`runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "csrf", In: "cookie"`,
+		`runtime.CookiePairsRequestEditor(cookieValues)`,
 		"cookieEditor", // passed as trailing arg
 	} {
 		if !strings.Contains(string(src), want) {

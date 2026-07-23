@@ -21,9 +21,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ petstore.ClientWithResponsesInterface = (petstore.ClientWithResponsesInterface)(nil)
 
-// RegisterSwaggerPetstoreClient registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// RegisterSwaggerPetstoreClient registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterSwaggerPetstoreClientWithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// RegisterSwaggerPetstoreClientOpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func RegisterSwaggerPetstoreClientOpenAI(s runtime.MCPServer, c petstore.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterSwaggerPetstoreClientWithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// RegisterSwaggerPetstoreClientWithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func RegisterSwaggerPetstoreClientWithProvider(s runtime.MCPServer, c petstore.ClientWithResponsesInterface, provider runtime.LLMProvider, opts ...runtime.Option) {
+
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -32,10 +45,11 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 	// GET /pets
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "findPets",
-			Description:    "Returns all pets\n\nReturns all pets from the system that the user has access to\nNam sed condimentum est. Maecenas tempor sagittis sapien, nec rhoncus sem sagittis sit amet. Aenean at gravida augue, ac iaculis sem. Curabitur odio lorem, ornare eget elementum nec, cursus id lectus. Duis mi turpis, pulvinar ac eros ac, tincidunt varius justo. In hac habitasse platea dictumst. Integer at adipiscing ante, a sagittis ligula. Aenean pharetra tempor ante molestie imperdiet. Vivamus id aliquam diam. Cras quis velit non tortor eleifend sagittis. Praesent at enim pharetra urna volutpat venenatis eget eget mauris. In eleifend fermentum facilisis. Praesent enim enim, gravida ac sodales sed, placerat id erat. Suspendisse lacus dolor, consectetur non augue vel, vehicula interdum libero. Morbi euismod sagittis libero sed lacinia.\n\nSed tempus felis lobortis leo pulvinar rutrum. Nam mattis velit nisl, eu condimentum ligula luctus nec. Phasellus semper velit eget aliquet faucibus. In a mattis elit. Phasellus vel urna viverra, condimentum lorem id, rhoncus nibh. Ut pellentesque posuere elementum. Sed a varius odio. Morbi rhoncus ligula libero, vel eleifend nunc tristique vitae. Fusce et sem dui. Aenean nec scelerisque tortor. Fusce malesuada accumsan magna vel tempus. Quisque mollis felis eu dolor tristique, sit amet auctor felis gravida. Sed libero lorem, molestie sed nisl in, accumsan tempor nisi. Fusce sollicitudin massa ut lacinia mattis. Sed vel eleifend lorem. Pellentesque vitae felis pretium, pulvinar elit eu, euismod sapien.\n",
-			RawInputSchema: json.RawMessage(input_findPets),
-			Annotations:    &runtime.ToolAnnotations{Title: "Returns all pets", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "findPets",
+			Description:       "Returns all pets\n\nReturns all pets from the system that the user has access to\nNam sed condimentum est. Maecenas tempor sagittis sapien, nec rhoncus sem sagittis sit amet. Aenean at gravida augue, ac iaculis sem. Curabitur odio lorem, ornare eget elementum nec, cursus id lectus. Duis mi turpis, pulvinar ac eros ac, tincidunt varius justo. In hac habitasse platea dictumst. Integer at adipiscing ante, a sagittis ligula. Aenean pharetra tempor ante molestie imperdiet. Vivamus id aliquam diam. Cras quis velit non tortor eleifend sagittis. Praesent at enim pharetra urna volutpat venenatis eget eget mauris. In eleifend fermentum facilisis. Praesent enim enim, gravida ac sodales sed, placerat id erat. Suspendisse lacus dolor, consectetur non augue vel, vehicula interdum libero. Morbi euismod sagittis libero sed lacinia.\n\nSed tempus felis lobortis leo pulvinar rutrum. Nam mattis velit nisl, eu condimentum ligula luctus nec. Phasellus semper velit eget aliquet faucibus. In a mattis elit. Phasellus vel urna viverra, condimentum lorem id, rhoncus nibh. Ut pellentesque posuere elementum. Sed a varius odio. Morbi rhoncus ligula libero, vel eleifend nunc tristique vitae. Fusce et sem dui. Aenean nec scelerisque tortor. Fusce malesuada accumsan magna vel tempus. Quisque mollis felis eu dolor tristique, sit amet auctor felis gravida. Sed libero lorem, molestie sed nisl in, accumsan tempor nisi. Fusce sollicitudin massa ut lacinia mattis. Sed vel eleifend lorem. Pellentesque vitae felis pretium, pulvinar elit eu, euismod sapien.\n",
+			RawInputSchema:    inputSchemaForProvider(provider, input_findPets, input_openai_findPets),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Returns all pets", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -50,7 +64,7 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 			}
 			resp, err := c.FindPetsWithResponse(ctx, &params)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -67,11 +81,12 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 	// POST /pets
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "addPet",
-			Description:     "Creates a new pet\n\nCreates a new pet in the store. Duplicates are allowed",
-			RawInputSchema:  json.RawMessage(input_addPet),
-			RawOutputSchema: json.RawMessage(output_addPet),
-			Annotations:     &runtime.ToolAnnotations{Title: "Creates a new pet"},
+			Name:              "addPet",
+			Description:       "Creates a new pet\n\nCreates a new pet in the store. Duplicates are allowed",
+			RawInputSchema:    inputSchemaForProvider(provider, input_addPet, input_openai_addPet),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_addPet),
+			Annotations:       &runtime.ToolAnnotations{Title: "Creates a new pet"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -86,7 +101,7 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 			}
 			resp, err := c.AddPetWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -103,10 +118,11 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 	// DELETE /pets/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "deletePet",
-			Description:    "Deletes a pet by ID\n\ndeletes a single pet based on the ID supplied",
-			RawInputSchema: json.RawMessage(input_deletePet),
-			Annotations:    &runtime.ToolAnnotations{Title: "Deletes a pet by ID", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
+			Name:              "deletePet",
+			Description:       "Deletes a pet by ID\n\ndeletes a single pet based on the ID supplied",
+			RawInputSchema:    inputSchemaForProvider(provider, input_deletePet, input_openai_deletePet),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Deletes a pet by ID", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -121,7 +137,7 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 			}
 			resp, err := c.DeletePetWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -138,11 +154,12 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 	// GET /pets/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "findPetByID",
-			Description:     "Returns a pet by ID\n\nReturns a pet based on a single ID",
-			RawInputSchema:  json.RawMessage(input_findPetByID),
-			RawOutputSchema: json.RawMessage(output_findPetByID),
-			Annotations:     &runtime.ToolAnnotations{Title: "Returns a pet by ID", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "findPetByID",
+			Description:       "Returns a pet by ID\n\nReturns a pet based on a single ID",
+			RawInputSchema:    inputSchemaForProvider(provider, input_findPetByID, input_openai_findPetByID),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_findPetByID),
+			Annotations:       &runtime.ToolAnnotations{Title: "Returns a pet by ID", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -157,7 +174,7 @@ func RegisterSwaggerPetstoreClient(s runtime.MCPServer, c petstore.ClientWithRes
 			}
 			resp, err := c.FindPetByIDWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -184,6 +201,15 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+
 const input_findPets = `{
   "properties": {
     "query": {
@@ -204,6 +230,47 @@ const input_findPets = `{
       "type": "object"
     }
   },
+  "type": "object"
+}`
+
+const input_openai_findPets = `{
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "maximum number of results to return",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "tags to filter by",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "limit",
+        "tags"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "query"
+  ],
   "type": "object"
 }`
 
@@ -229,6 +296,37 @@ const input_addPet = `{
   "properties": {
     "body": {
       "$ref": "#/$defs/NewPet"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_addPet = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Name of the pet",
+          "type": "string"
+        },
+        "tag": {
+          "description": "Type of the pet",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "tag"
+      ],
+      "type": "object"
     }
   },
   "required": [
@@ -307,9 +405,57 @@ const input_deletePet = `{
   "type": "object"
 }`
 
+const input_openai_deletePet = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "ID of pet to delete",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
 const input_findPetByID = `{
   "properties": {
     "path": {
+      "properties": {
+        "id": {
+          "description": "ID of pet to fetch",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_findPetByID = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
       "properties": {
         "id": {
           "description": "ID of pet to fetch",

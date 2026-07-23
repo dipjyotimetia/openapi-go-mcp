@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -101,19 +102,46 @@ func TestApplyConfig_RequiredPropagation(t *testing.T) {
 	}
 }
 
+func TestApplyConfig_StrictSchemaOptionalExtraIsNullableAndRequired(t *testing.T) {
+	tool := Tool{StrictInputSchema: true, RawInputSchema: []byte(`{"type":"object","additionalProperties":false,"properties":{}}`)}
+	got := ApplyConfig(tool, &Config{ExtraProperties: []ExtraProperty{{Name: "tenant", Type: "string"}}})
+	var schema map[string]any
+	if err := json.Unmarshal(got.RawInputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	props := schema["properties"].(map[string]any)
+	entry := props["tenant"].(map[string]any)
+	types := entry["type"].([]any)
+	if !reflect.DeepEqual(types, []any{"string", "null"}) {
+		t.Errorf("tenant type = %#v", types)
+	}
+	required := schema["required"].([]any)
+	if !reflect.DeepEqual(required, []any{"tenant"}) {
+		t.Errorf("required = %#v", required)
+	}
+}
+
 func TestWithHTTPClient_AndTimeout_AndServerVars(t *testing.T) {
 	cfg := NewConfig()
 	client := &http.Client{Timeout: 5 * time.Second}
 	WithHTTPClient(client)(cfg)
+	WithMTLSHTTPClient(client)(cfg)
 	WithRequestTimeout(2 * time.Second)(cfg)
+	WithMaxResponseBytes(1234)(cfg)
 	WithServerVariables(map[string]string{"host": "api.example.com"})(cfg)
 	WithServerVariables(map[string]string{"version": "v2"})(cfg)
 
 	if cfg.HTTPClient != client {
 		t.Errorf("HTTPClient not stored")
 	}
+	if !cfg.MTLSConfigured {
+		t.Error("MTLSConfigured not stored")
+	}
 	if cfg.RequestTimeout != 2*time.Second {
 		t.Errorf("RequestTimeout: got %v", cfg.RequestTimeout)
+	}
+	if cfg.MaxResponseBytes != 1234 {
+		t.Errorf("MaxResponseBytes: got %d", cfg.MaxResponseBytes)
 	}
 	if cfg.ServerVariables["host"] != "api.example.com" || cfg.ServerVariables["version"] != "v2" {
 		t.Errorf("ServerVariables merged incorrectly: %v", cfg.ServerVariables)

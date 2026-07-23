@@ -34,6 +34,11 @@ func generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
 	if err != nil {
 		return diags, err
 	}
+	if opts.Mode == ModeProxy {
+		if err := preflightScaffold(opts, doc, collectUsedSchemes(ops)); err != nil {
+			return diags, fmt.Errorf("scaffold: %w", err)
+		}
+	}
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return diags, fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
 	}
@@ -152,6 +157,7 @@ func renderWithOps(doc *openapi3.T, opts Options) ([]byte, []Operation, []Diagno
 		ExtraImports:   extraImports,
 		BaseURLDefault: baseDefault,
 		AllSchemes:     allSchemes,
+		ProviderAware:  !opts.OpenAICompat,
 	}
 
 	tmpl, err := template.New("mcp").Funcs(templateFuncs()).Parse(tmplSrc)
@@ -191,8 +197,10 @@ func defaultBaseURL(doc *openapi3.T) string {
 func collectUsedSchemes(ops []Operation) []SecurityScheme {
 	seen := make(map[string]SecurityScheme)
 	for _, op := range ops {
-		for _, s := range op.Security {
-			seen[s.Name] = s
+		for _, alternative := range op.Security {
+			for _, s := range alternative {
+				seen[s.Name] = s
+			}
 		}
 	}
 	if len(seen) == 0 {
@@ -272,18 +280,55 @@ var reservedClientAliases = map[string]struct{}{
 	"uintptr":    {},
 }
 
-// validateNoSchemaConstCollisions ensures every tool's safeIdent-mangled
-// const name is unique. Two operations whose ToolName mangles to the same
-// identifier (e.g. "get-pet" and "get_pet" both → "get_pet") would emit
-// duplicate const declarations; reject this at codegen time.
+// validateNoSchemaConstCollisions ensures every emitted tool name and schema
+// const name is unique. ToolName normalizes operation IDs before this point,
+// so this also catches distinct source names that normalize to one portable
+// name (for example, "get.pet" and "get_pet").
 func validateNoSchemaConstCollisions(ops []Operation) error {
-	seen := make(map[string]string, len(ops))
-	for _, op := range ops {
-		c := "input_" + safeIdent(op.ToolName)
-		if prev, dup := seen[c]; dup && prev != op.ToolName {
-			return fmt.Errorf("tool names %q and %q both mangle to const %q; rename one operation or pass a -name-prefix to disambiguate", prev, op.ToolName, c)
+	seenToolNames := make(map[string]struct{}, len(ops))
+	seenConsts := make(map[string]string, len(ops))
+	seenAuthHelpers := make(map[string]string, len(ops))
+	seenSecuritySchemes := make(map[string]struct{})
+	registerAuthHelper := func(name, source, kind string) error {
+		if previous, dup := seenAuthHelpers[name]; dup && previous != source {
+			return fmt.Errorf("%s %q and %q generate the same auth helper %q; rename one security scheme or operationId", kind, previous, source, name)
 		}
-		seen[c] = op.ToolName
+		seenAuthHelpers[name] = source
+		return nil
+	}
+	for _, op := range ops {
+		if _, dup := seenToolNames[op.ToolName]; dup {
+			return fmt.Errorf("duplicate tool name %q after normalization; rename one operation to disambiguate", op.ToolName)
+		}
+		seenToolNames[op.ToolName] = struct{}{}
+
+		c := "input_" + safeIdent(op.ToolName)
+		if prev, dup := seenConsts[c]; dup {
+			return fmt.Errorf("tool names %q and %q both mangle to const %q; rename one operation to disambiguate", prev, op.ToolName, c)
+		}
+		seenConsts[c] = op.ToolName
+
+		for _, alternative := range op.Security {
+			for _, scheme := range alternative {
+				if _, seen := seenSecuritySchemes[scheme.Name]; seen {
+					continue
+				}
+				seenSecuritySchemes[scheme.Name] = struct{}{}
+				fragment := PascalCase(scheme.Name)
+				if err := registerAuthHelper("hasAuth"+fragment, "security scheme "+scheme.Name, "security schemes"); err != nil {
+					return err
+				}
+				if err := registerAuthHelper("applyAuth"+fragment, "security scheme "+scheme.Name, "security schemes"); err != nil {
+					return err
+				}
+			}
+		}
+
+		if op.AuthRequired {
+			if err := registerAuthHelper("applyAuthFor"+op.GoName, "operation "+op.ToolName, "operations"); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -309,6 +354,9 @@ type templateView struct {
 	// any operation; only populated in ModeProxy. The proxy template emits
 	// one apply<Scheme>Auth helper per entry.
 	AllSchemes []SecurityScheme
+	// ProviderAware emits standard and OpenAI registration paths together.
+	// Explicit OpenAICompat preserves the pre-provider API shape.
+	ProviderAware bool
 }
 
 // collectExtraImports walks every path parameter in ops and returns the sorted,

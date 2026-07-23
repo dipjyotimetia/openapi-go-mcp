@@ -333,7 +333,8 @@ openapi-go-mcp \
     -mode=proxy \
     -spec petstore.yaml \
     -out gen/petstore-mcp \
-    -module github.com/me/petstore-mcp
+    -module github.com/me/petstore-mcp \
+    -runtime-version vX.Y.Z # use the release version of this CLI; needed for dev builds
 
 cd gen/petstore-mcp
 go mod tidy
@@ -366,11 +367,16 @@ Auth shapes the generator wires automatically:
 | `type: apiKey, in: header/query/cookie` | `API_KEY_<UPPER_SCHEME_NAME>` |
 | `type: http, scheme: bearer` | `BEARER_TOKEN_<UPPER_SCHEME_NAME>` |
 | `type: http, scheme: basic` | `BASIC_AUTH_USERNAME_<UPPER_SCHEME_NAME>` + `BASIC_AUTH_PASSWORD_<UPPER_SCHEME_NAME>` |
-| `type: oauth2` | `OAUTH2_ACCESS_TOKEN_<UPPER_SCHEME_NAME>` (used as Bearer; no token-exchange flow) |
-| `type: openIdConnect`, `type: http, scheme: digest` | unsupported — surfaced as `unsupported-security-scheme` warning, dropped from wiring |
+| `type: oauth2` | `OAUTH2_ACCESS_TOKEN_<UPPER_SCHEME_NAME>` or, for `clientCredentials`, `OAUTH2_CLIENT_ID_<NAME>` + `OAUTH2_CLIENT_SECRET_<NAME>` (HTTPS token exchange with cached refresh) |
+| `type: mutualTLS` | `MTLS_CERT_FILE` + `MTLS_KEY_FILE`; optional `MTLS_CA_FILE` / `MTLS_SERVER_NAME` |
+| `type: openIdConnect`, `type: http, scheme: aws4-hmac-sha256` | deployment-owned signer via `runtime.WithRequestAuthProvider` (use the scheme-aware extension when one service has multiple custom schemes) |
 
 A missing required credential surfaces as an MCP tool-result error
 naming the env var the user should set — never a silent upstream 401.
+Authenticated upstream requests require HTTPS by default; local development can
+explicitly opt in with `runtime.WithAllowInsecureAuth`. Generated proxy
+scaffolds expose that opt-in only through `ALLOW_INSECURE_AUTH=1`; do not set
+it outside an isolated local environment.
 
 ## Pattern 14 — Batch proxy for a monorepo of specs
 
@@ -380,6 +386,7 @@ openapi-go-mcp \
     -spec apis/ \
     -out gen \
     -module github.com/acme/apis-mcp \
+    -runtime-version vX.Y.Z \
     -force
 ```
 

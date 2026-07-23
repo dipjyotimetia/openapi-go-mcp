@@ -7,37 +7,12 @@ discriminator branch logic) live in
 [`docs/design-decisions.md`](docs/design-decisions.md#non-goals) and are not
 repeated here.
 
-## Dynamic (no-codegen) registration
-
-A runtime library that parses an OpenAPI spec on startup and registers MCP
-tools dynamically, without the `*.mcp.go` codegen step. Companion codegen stays
-the default for the reasons in
-[design decision 1](docs/design-decisions.md#1-companion-code-generation-not-runtime-introspection);
-the dynamic path is for tooling that can't run a generator (plugins, spec
-playgrounds).
-
 ## First-class streaming responses
 
 SSE and chunked responses currently surface as raw bytes in the tool result
 ([known limitations](docs/architecture.md#known-limitations)). First-class
 support means incremental delivery through the MCP progress/partial-result
 channel once the SDKs settle on a shape.
-
-## Richer MCP result types: embedded resources
-
-`image/*` and `audio/*` responses now surface as native MCP `ImageContent` /
-`AudioContent` blocks. The remaining gap is embedded resources for content
-MCP has no native type for (video, PDF, arbitrary binaries), which today
-stays base64-encoded text
-([known limitations](docs/architecture.md#known-limitations)).
-
-## Parameter style lowering
-
-`style` / `explode` / `allowReserved` beyond the `form`/`simple` defaults
-(deepObject, matrix, label, spaceDelimited, pipeDelimited) are detected and
-warned about (`unsupported-parameter-style`) but not lowered. Companion mode
-inherits whatever oapi-codegen does; proxy mode stringifies with the simple
-defaults.
 
 ## Multipart arrays of binary items
 

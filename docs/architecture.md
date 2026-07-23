@@ -32,7 +32,7 @@ testdata/                 # Spec fixtures + golden generator output
 
 The generator runs in one of two modes, selected by `-mode` / `Options.Mode`:
 
-- **`companion`** (default, byte-for-byte stable, golden-test-guarded). Emits a single `<pkg>.mcp.go` file. The user supplies an `oapi-codegen` typed client, writes `main.go`, and wires authentication themselves. Use this mode when the MCP layer is one feature of a larger service binary.
+- **`companion`** (default, deterministic and golden-test-guarded). Emits a single `<pkg>.mcp.go` file. The user supplies an `oapi-codegen` typed client, writes `main.go`, and wires authentication themselves. Use this mode when the MCP layer is one feature of a larger service binary.
 - **`proxy`** (`-mode=proxy`). Emits a runnable Go module — `main.go` + `go.mod` + `<pkg>/<pkg>.mcp.go` + `README.md`. Handlers construct `*http.Request` objects directly via the runtime helpers and dispatch through `cfg.HTTPClient.Do`. Authentication is wired automatically from the spec's `components.securitySchemes` using environment variables (see [`usage-patterns.md`](usage-patterns.md#pattern-13--standalone-proxy-server-zero-boilerplate)). No `oapi-codegen` step needed.
 
 Both modes share schema conversion, parameter decoding, response wrapping, `x-mcp` filtering, batch orchestration, and the MCP-library adapters. Only request construction and the auth helpers diverge — companion mode delegates to the typed client; proxy mode walks the operation and builds the request inline.
@@ -121,9 +121,9 @@ LLM client ──tools/call──▶│  MCP transport     │
 ┌────────────────────────────┐         ┌─────────────────────────────────┐
 │ generated handler closure  │         │ generated handler closure       │
 │  decode args via runtime.* │         │  decode args via                │
-│    DecodePathParam,        │         │    runtime.DecodeProxyParam     │
-│    DecodeBody,             │         │    (stringifies path/query/     │
-│    DecodeParamsCombined    │         │     header/cookie for the wire) │
+│    DecodePathParam,        │         │    runtime.SerializeProxyParam  │
+│    DecodeBody,             │         │    (OpenAPI style/explode for   │
+│    DecodeParamsCombined    │         │     path/query/header/cookie)   │
 │                            │         │                                 │
 │  call typed oapi-codegen   │         │  build *http.Request directly   │
 │    client method:          │         │    runtime.BuildProxyURL        │
@@ -131,10 +131,9 @@ LLM client ──tools/call──▶│  MCP transport     │
 │                            │         │    runtime.BuildMultipartBody   │
 │                            │         │                                 │
 │  user wires auth via       │         │  apply auth from env vars:      │
-│    request editor /        │         │    applyAuth<Scheme>(req) →     │
-│    WithExtraProperties     │         │    runtime.ApplyAPIKey/Bearer/  │
-│                            │         │    Basic + MissingCredential-   │
-│                            │         │    Error on missing env var     │
+│    request editor /        │         │    applyAuthForOperation(ctx,   │
+│    WithExtraProperties     │         │      req, cfg) → standard and   │
+│                            │         │    custom auth; fails closed    │
 │                            │         │                                 │
 │                            │         │  send via cfg.HTTPClient.Do     │
 │                            │         │                                 │
@@ -142,7 +141,7 @@ LLM client ──tools/call──▶│  MCP transport     │
 │    NewToolResultFromHTTP(  │         │    NewToolResultFromHTTP(       │
 │      resp.StatusCode(),    │         │      resp.StatusCode,           │
 │      headerOf(...),        │         │      resp.Header,               │
-│      resp.Body, ct)        │         │      ReadResponseBody, ct)      │
+│      resp.Body, ct)        │         │      ReadResponseBodyLimit, ct) │
 └────────────────────────────┘         └─────────────────────────────────┘
 ```
 
@@ -256,7 +255,7 @@ s.AddTool(
         if bodyCT != "" {
             httpReq.Header.Set("Content-Type", bodyCT)
         }
-        if err := applyAuthBearerAuth(httpReq); err != nil {  // generated per scheme
+        if err := applyAuthForCreatePet(ctx, httpReq, cfg); err != nil {
             return runtime.HandleError(err)
         }
 
@@ -264,7 +263,7 @@ s.AddTool(
         if err != nil {
             return runtime.HandleError(err)
         }
-        respBody, err := runtime.ReadResponseBody(httpResp)
+        respBody, err := runtime.ReadResponseBodyLimit(httpResp, cfg.MaxResponseBytes)
         if err != nil {
             return runtime.HandleError(err)
         }
@@ -305,14 +304,14 @@ When an operation declares more than one content type, the generator picks deter
 
 ## Known limitations
 
-- Response decoding by content type: `application/json` uses `NewToolResultJSON` (structured); `text/*` uses `NewToolResultText`; `image/*` and `audio/*` surface as native MCP `ImageContent` / `AudioContent` blocks (raw payload, no base64 text duplicate — see `NewToolResultImage` / `NewToolResultAudio`); `application/octet-stream`, `application/xml`, `video/*`, and other binary/raw types use `NewToolResultBinary` (base64-encoded into `Text`, surfaced as `{"contentType","base64"}` in `StructuredContent`) because MCP has no native content type for them — embedded resources are tracked in [TODO](../TODO.md). Operations with no response body keep the JSON wrapper (empty body in, empty result out).
+- Response decoding by content type: `application/json` uses `NewToolResultJSON` (structured); `text/*` uses `NewToolResultText`; `image/*` and `audio/*` surface as native MCP `ImageContent` / `AudioContent` blocks; all other binary/raw types surface as bounded embedded blob resources (`NewToolResultResource`). Resource URIs are opaque content-addressed URNs rather than upstream URLs. Operations with no response body keep the JSON wrapper (empty body in, empty result out).
 - Multipart binary fields are detected for top-level and nested-object properties. Arrays of binary items are not unpacked into per-element parts (binary leaves under `items` schemas are ignored in v1).
 - A spec header parameter named `Content-Type` alongside a non-JSON request body emits a generator-time warning. In companion mode the header is silently overridden by oapi-codegen's `<Op>WithBodyWithResponse`; in proxy mode the generated handler sets `Content-Type` from the body encoder *after* applying header params, so a spec-declared `Content-Type` is overwritten there too.
-- Streaming responses (SSE, chunked transfer-encoding) surface as raw bytes — no first-class streaming support yet.
-- No dynamic (runtime, no-codegen) registration path. Tracked in [TODO](../TODO.md).
+- Streaming responses (SSE, chunked transfer-encoding) are buffered as finite tool results; proxy and dynamic modes enforce a 16 MiB default response cap before transformation. First-class progressive MCP streaming remains out of scope.
+- Dynamic startup registration is available through `pkg/dynamic`; it deliberately rejects mutable hot reload, remote redirects, remote external `$ref`s, and remote specs without an explicit trusted HTTPS base URL. A remote source remains deployment-owned trusted configuration, not a user-provided URL; callers should enforce an allowlist and network egress policy when their deployment needs stronger SSRF controls.
 - The schema-converter surfaces `discriminator` as a human-readable hint in the schema's `description` (property name + mapping keys). It does not invent JSON-Schema keywords (`if`/`then`/`else`) for branch selection — clients must read the description to drive the choice.
-- **Proxy mode auth scope**: only env-var-driven credentials (apiKey, http+bearer, http+basic, oauth2-as-bearer). OAuth2 token-exchange flows, mTLS, AWS SigV4, and OIDC discovery are out of scope. Users needing those plug in a custom `http.Client` via `runtime.WithHTTPClient` from companion mode.
-- **Proxy mode parameter serialisation**: query/header/path/cookie values are stringified via the simple OpenAPI defaults (`form` style with `explode=false` for query; comma-join for arrays; `fmt.Sprint` for scalars). The `style` / `explode` / `allowReserved` keywords on parameters are not honoured. Specs needing matrix or pipeDelimited styles should use companion mode.
+- **Proxy mode auth scope**: apiKey, Bearer, Basic, OAuth pre-acquired tokens, OAuth client credentials, and mTLS are native. OIDC/SigV4-style schemes require `runtime.WithRequestAuthProvider`; browser OAuth/OIDC discovery and cloud SDK credentials stay application-owned.
+- **Proxy parameter serialisation**: supported OpenAPI style/explode forms are emitted directly. Unsupported location/style pairs produce diagnostics instead of being silently coerced.
 
 ## References
 

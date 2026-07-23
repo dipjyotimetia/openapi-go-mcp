@@ -39,6 +39,7 @@ func NewServer(name, version string, opts ...mcpserver.ServerOption) (*mcpserver
 }
 
 func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
+	validator := runtime.CompileInputValidator(tool.RawInputSchema)
 	mcpTool := mcp.Tool{
 		Name:            tool.Name,
 		Description:     tool.Description,
@@ -62,25 +63,33 @@ func (a *adapter) AddTool(tool runtime.Tool, handler runtime.ToolHandler) {
 		mcpTool.Annotations = converted
 	}
 	a.s.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// mark3labs deserialises Arguments to map[string]any when the wire
-		// shape allows; route through runtime.DecodeArguments so malformed
-		// or exotic inputs (e.g. a raw string accidentally passed) yield the
-		// same IsError result the gosdk adapter produces.
-		args, err := runtime.DecodeArguments(req.Params.Arguments)
-		if err != nil {
-			toolResult, _ := runtime.HandleError(err)
-			return toMCPResult(toolResult), nil
-		}
-
-		result, err := handler(ctx, &runtime.CallToolRequest{Arguments: args})
-		if err != nil {
-			return nil, err
-		}
-		if result == nil {
-			return nil, nil
-		}
-		return toMCPResult(result), nil
+		return callTool(ctx, validator, handler, req.Params.Arguments)
 	})
+}
+
+func callTool(ctx context.Context, validator *runtime.InputValidator, handler runtime.ToolHandler, rawArguments any) (*mcp.CallToolResult, error) {
+	// mark3labs deserialises Arguments to map[string]any when the wire
+	// shape allows; route through runtime.DecodeArguments so malformed
+	// or exotic inputs (e.g. a raw string accidentally passed) yield the
+	// same IsError result the gosdk adapter produces.
+	args, err := runtime.DecodeArguments(rawArguments)
+	if err != nil {
+		toolResult, _ := runtime.HandleError(err)
+		return toMCPResult(toolResult), nil
+	}
+	if err := validator.Validate(args); err != nil {
+		toolResult, _ := runtime.HandleError(err)
+		return toMCPResult(toolResult), nil
+	}
+
+	result, err := handler(ctx, &runtime.CallToolRequest{Arguments: args})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return toMCPResult(result), nil
 }
 
 func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
@@ -101,6 +110,12 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 			block = mcp.ImageContent{Type: "image", Data: data, MIMEType: result.MIMEType}
 		} else {
 			block = mcp.AudioContent{Type: "audio", Data: data, MIMEType: result.MIMEType}
+		}
+		res = &mcp.CallToolResult{Content: []mcp.Content{block}, IsError: result.IsError}
+	case runtime.MediaResource:
+		block := mcp.EmbeddedResource{
+			Type:     "resource",
+			Resource: mcp.BlobResourceContents{URI: result.ResourceURI, MIMEType: result.MIMEType, Blob: base64.StdEncoding.EncodeToString(result.Binary)},
 		}
 		res = &mcp.CallToolResult{Content: []mcp.Content{block}, IsError: result.IsError}
 	default:

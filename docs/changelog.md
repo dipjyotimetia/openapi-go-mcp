@@ -6,13 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — v1 production hardening
+
+- **Provider-aware proxy schemas and strict OpenAI compatibility.** Generated proxy packages now expose standard, OpenAI, and provider-selecting registration entry points. The OpenAI surface follows strict-schema requirements recursively: object properties are all listed in `required`, OpenAPI-optional fields are nullable, and objects reject unspecified properties.
+- **Fail-closed security with native OAuth client credentials and mTLS.** Proxy generation now preserves OpenAPI security OR/AND semantics; supports `apiKey`, Basic, Bearer, pre-acquired OAuth tokens, OAuth 2 client-credentials token acquisition/refresh, and OpenAPI 3.1 `mutualTLS`; and refuses to send an unauthenticated request when no declared alternative is satisfied. `openIdConnect` and `aws4-hmac-sha256` are supported through `runtime.WithRequestAuthProvider` for deployment-owned OIDC/SigV4 signers. A selected mTLS alternative requires `MTLS_CERT_FILE` and `MTLS_KEY_FILE` (with optional CA/server-name settings); manual integrations use `runtime.WithMTLSHTTPClient`, not the generic HTTP-client option.
+- **Startup-time dynamic registration.** `pkg/dynamic.Register` can register tools directly from a local document or a fully bundled HTTPS document. Remote sources have a bounded body/time budget, no redirects or external references, and require a caller-selected HTTPS `BaseURL`; source-fetch and upstream clients are intentionally separate. Dynamic tools share proxy parameter, security, provider-schema, timeout, and response-boundary behavior.
+- **OpenAPI parameter serialization.** Proxy and dynamic paths now apply `style`, `explode`, and `allowReserved` for supported path/query/header/cookie forms, including matrix, label, space/pipe-delimited arrays, deep objects, and cookie expansion. Unsupported location/style combinations are diagnostics rather than silently coerced.
+- **Bounded upstream responses.** Proxy handlers use a 16 MiB default cap before buffering or base64-encoding an upstream response. Set `runtime.WithMaxResponseBytes` (or `dynamic.Config.MaxResponseBytes`) to choose a deployment-specific bound; oversized responses produce the machine-readable `response_too_large` tool error.
+- **Embedded resources for generic binary responses.** PDF, video, octet-stream, XML, and other non-text/non-image/non-audio 2xx responses now surface as native embedded MCP blob resources through both adapters. They use an opaque content-addressed URN and carry no fetchable upstream URL; the response cap applies before projection.
+
 ### Added — native media result types
 
-- **`image/*` and `audio/*` responses surface as native MCP content blocks.** A 2xx upstream response with an image or audio content type now produces an MCP `ImageContent` / `AudioContent` block (both SDK adapters, both companion and proxy modes), so MCP clients can render the media directly instead of receiving base64 text. The content-type parameters are stripped from the surfaced `mimeType` (`image/png; charset=binary` → `image/png`); classification follows the same precedence as before, so `+json` suffixes still win (`image/foo+json` stays JSON) and `image/svg+xml` counts as an image. New library surface: `runtime.CallToolResult` gains additive `Binary` / `MediaKind` / `MIMEType` fields, plus `runtime.NewToolResultImage` / `runtime.NewToolResultAudio` constructors and the `runtime.MediaKind` type. This closes the image/audio half of the "Richer MCP result types" roadmap item; embedded resources remain on the roadmap.
+- **`image/*` and `audio/*` responses surface as native MCP content blocks.** A 2xx upstream response with an image or audio content type now produces an MCP `ImageContent` / `AudioContent` block (both SDK adapters, both companion and proxy modes), so MCP clients can render the media directly instead of receiving base64 text. The content-type parameters are stripped from the surfaced `mimeType` (`image/png; charset=binary` → `image/png`); classification follows the same precedence as before, so `+json` suffixes still win (`image/foo+json` stays JSON) and `image/svg+xml` counts as an image. New library surface: `runtime.CallToolResult` gains additive `Binary` / `MediaKind` / `MIMEType` fields, plus `runtime.NewToolResultImage` / `runtime.NewToolResultAudio` constructors and the `runtime.MediaKind` type. Together with embedded blob resources for other binary media, this closes the "Richer MCP result types" roadmap item.
 
 ### Changed — native media result types
 
-- **2xx `image/*`/`audio/*` responses no longer emit base64 text.** Previously these decoded like any other binary response: base64 into `Text` plus a `{"contentType","base64"}` structured envelope. The payload now lives only in the native media content block — duplicating multi-MB media as base64 text would double the wire size. Clients that parsed base64 out of the text block for image/audio responses must read the media block instead. All other binary types (`application/octet-stream`, `application/xml`, `video/*`, PDFs, …) are unchanged. HTTP status/header metadata (`_meta`) is unaffected.
+- **2xx media responses no longer emit base64 text envelopes.** Images and audio use their native MCP blocks; other binary types use embedded blob resources. The payload now lives only in its native content block — duplicating multi-MB media as base64 text would double the wire size. HTTP status/header metadata (`_meta`) is unaffected.
 
 ### Added — MCP gap review
 
@@ -21,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Parameter-object metadata in input schemas** — `description`, `example`, and `deprecated` declared on the Parameter object (not its schema) are now merged into the tool input schema; the schema's own keywords win on collision. Previously this metadata was silently dropped.
 - **Deprecated operations surfaced** — `deprecated: true` on an operation now prefixes the tool description with `Deprecated.` (MCP has no native flag).
 - **Webhook / link / nested-multipart-encoding diagnostics are now emitted** — the codes `dropped-webhook` (OpenAPI 3.1 top-level `webhooks`, including webhooks-only documents), `dropped-link` (response `links`, named per `<status>.<link>`), and `nested-multipart-encoding` (encoding metadata keyed by a nested binary field's name, which OpenAPI cannot address) existed but never fired; these spec features were dropped with no trace. All three are warnings and therefore visible to `-warnings-as-errors` pipelines.
-- **`TODO.md` roadmap** — the file referenced by the architecture doc, design decisions, and CI comments now actually exists.
+- **Roadmap tracking** — the release introduced an explicit roadmap for gaps that were intentionally deferred at that point.
 - **E2E coverage for `-openai-compat`** — `tests/e2e/cli_test.go` drives the real binary against the composition-heavy complex-schemas fixture and asserts the strict-dialect invariants (no `$ref`/`oneOf`/`anyOf`/`allOf`/`$defs`, `additionalProperties:false` forced). The generator-level invariants test also gained the recursive fixture.
 
 ### Fixed — MCP gap review
@@ -41,7 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added — proxy mode
 
-- **`-mode=proxy` emission mode** — new first-class output: a runnable Go module (`main.go` + `go.mod` + `<pkg>/<pkg>.mcp.go` + `README.md`) that proxies MCP tool calls directly to the upstream HTTP API. No `oapi-codegen` step needed; the generated handlers build `*http.Request` objects via `http.NewRequestWithContext` and dispatch through `cfg.HTTPClient.Do`. Companion mode remains the default and is byte-for-byte unchanged (the golden test still passes).
+- **`-mode=proxy` emission mode** — new first-class output: a runnable Go module (`main.go` + `go.mod` + `<pkg>/<pkg>.mcp.go` + `README.md`) that proxies MCP tool calls directly to the upstream HTTP API. No `oapi-codegen` step needed; the generated handlers build `*http.Request` objects via `http.NewRequestWithContext` and dispatch through `cfg.HTTPClient.Do`. Companion mode remains the default and its output is golden-test guarded.
 - **`-module <import-path>` CLI flag** — required iff `-mode=proxy`. Becomes the `module` directive in the generated `go.mod`. In batch mode it's treated as a base path; each spec's slug is appended.
 - **`-sdk={gosdk|mark3labs}` CLI flag** — picks which MCP SDK adapter the generated `main.go` imports. Defaults to `gosdk` (the official `modelcontextprotocol/go-sdk`). Ignored in companion mode.
 - **`Options.Mode`, `Options.ModulePath`, `Options.SDK`** — library-level equivalents of the new flags.
@@ -166,7 +175,7 @@ Initial public release.
 - Multipart `encoding[field]` metadata (per-part content-type, custom headers, style) is ignored — every file part is sent as `application/octet-stream`. *(Per-part content-type shipped in v0.1.1 for top-level fields; custom headers/style remain unsupported.)*
 - A spec header parameter named `Content-Type` is silently overridden by oapi-codegen's `<Op>WithBodyWithResponse` for non-JSON request bodies. *(A generator warning for this shipped in v0.1.1.)*
 - Streaming responses (SSE, chunked) surface as raw bytes; no first-class streaming support yet.
-- No dynamic (no-codegen, reflection-based) registration path yet. Tracked in `TODO.md`.
+- No dynamic (no-codegen, reflection-based) registration path yet. *(Superseded by the startup-only `pkg/dynamic` path.)*
 - `discriminator` is dropped during schema conversion — JSON Schema has no direct equivalent. *(Surfaced as a description hint since v0.1.1.)*
 
 [Unreleased]: https://github.com/dipjyotimetia/openapi-go-mcp/compare/v0.1.1...HEAD

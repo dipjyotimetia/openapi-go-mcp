@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // AuthLocation is the slot an apiKey credential occupies on an outgoing
@@ -38,6 +39,22 @@ const (
 type MissingCredentialError struct {
 	SchemeName string
 	EnvVar     string
+}
+
+// UnsatisfiedSecurityError reports that an operation declares security but no
+// supported credential alternative is configured. It is deliberately distinct
+// from an upstream 401: callers can fix local configuration without leaking an
+// unauthenticated request to the API.
+type UnsatisfiedSecurityError struct {
+	Operation      string
+	MissingEnvVars []string
+}
+
+func (e *UnsatisfiedSecurityError) Error() string {
+	if len(e.MissingEnvVars) > 0 {
+		return fmt.Sprintf("no configured credential satisfies declared security for %s; set one complete alternative (missing: %s)", e.Operation, strings.Join(e.MissingEnvVars, ", "))
+	}
+	return fmt.Sprintf("no configured credential satisfies declared security for %s", e.Operation)
 }
 
 func (e *MissingCredentialError) Error() string {

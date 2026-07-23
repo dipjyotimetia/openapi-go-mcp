@@ -151,7 +151,10 @@ func (c *SchemaConverter) convertSchema(s *openapi3.Schema) map[string]any {
 	}
 
 	if len(s.Properties) > 0 {
-		props := make(map[string]any, len(s.Properties))
+		props, _ := out["properties"].(map[string]any)
+		if props == nil {
+			props = make(map[string]any, len(s.Properties))
+		}
 		for name, sub := range s.Properties {
 			props[name] = c.Convert(sub)
 		}
@@ -159,9 +162,18 @@ func (c *SchemaConverter) convertSchema(s *openapi3.Schema) map[string]any {
 	}
 
 	if len(s.Required) > 0 {
-		req := make([]any, len(s.Required))
-		for i, r := range s.Required {
-			req[i] = r
+		req, _ := out["required"].([]any)
+		seen := make(map[string]struct{}, len(req)+len(s.Required))
+		for _, value := range req {
+			if name, ok := value.(string); ok {
+				seen[name] = struct{}{}
+			}
+		}
+		for _, r := range s.Required {
+			if _, ok := seen[r]; !ok {
+				req = append(req, r)
+				seen[r] = struct{}{}
+			}
 		}
 		out["required"] = req
 	}
@@ -220,7 +232,17 @@ func (c *SchemaConverter) copyStringConstraints(s *openapi3.Schema, out map[stri
 		out["pattern"] = s.Pattern
 	}
 	if len(s.Enum) > 0 {
-		out["enum"] = append([]any(nil), s.Enum...)
+		enum := append([]any(nil), s.Enum...)
+		if s.Nullable {
+			hasNull := false
+			for _, value := range enum {
+				hasNull = hasNull || value == nil
+			}
+			if !hasNull {
+				enum = append(enum, nil)
+			}
+		}
+		out["enum"] = enum
 	}
 }
 

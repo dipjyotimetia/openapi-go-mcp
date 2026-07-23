@@ -13,11 +13,22 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
+
+func TestMain(m *testing.M) {
+	originalReadBuildInfo := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3"}}, true
+	}
+	code := m.Run()
+	readBuildInfo = originalReadBuildInfo
+	os.Exit(code)
+}
 
 func newScaffoldDoc(title string) *openapi3.T {
 	return &openapi3.T{
@@ -74,7 +85,7 @@ func TestWriteScaffold_GoSDK_MainCompilesAsAST(t *testing.T) {
 		`"github.com/modelcontextprotocol/go-sdk/mcp"`,
 		"gosdk.NewServer",
 		`mcp.StdioTransport{}`,
-		"petmcp.RegisterPetstoreClient(s)",
+		"petmcp.RegisterPetstoreClient(s, registerOpts...)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("main.go missing %q", want)
@@ -111,6 +122,31 @@ func TestWriteScaffold_Mark3labs_MainShape(t *testing.T) {
 	}
 }
 
+func TestWriteScaffold_MTLSIsOptionalAtStartup(t *testing.T) {
+	src := string(renderScaffoldMain(Options{PackageName: "securemcp", ModulePath: "example.com/secure"}, newScaffoldDoc("Secure"), "gosdk", []SecurityScheme{{Name: "mtls", Kind: SecurityMTLS}}))
+	for _, want := range []string{
+		`mtlsCertFile := os.Getenv("MTLS_CERT_FILE")`,
+		`if mtlsCertFile != "" || mtlsKeyFile != "" {`,
+		"runtime.WithMTLSHTTPClient(mtlsClient)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("mTLS scaffold missing %q\n%s", want, src)
+		}
+	}
+}
+
+func TestWriteScaffold_AllowInsecureAuthRequiresExplicitEnvironmentOptIn(t *testing.T) {
+	src := string(renderScaffoldMain(Options{PackageName: "securemcp", ModulePath: "example.com/secure"}, newScaffoldDoc("Secure"), "gosdk", []SecurityScheme{{Name: "bearer", Kind: SecurityHTTPBearer}}))
+	for _, want := range []string{
+		`os.Getenv("ALLOW_INSECURE_AUTH") == "1"`,
+		"runtime.WithAllowInsecureAuth()",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("scaffold missing explicit insecure-auth opt-in %q\n%s", want, src)
+		}
+	}
+}
+
 func TestWriteScaffold_GoMod_ShapeAndOrder(t *testing.T) {
 	out := t.TempDir()
 	err := WriteScaffoldWithOverrides(Options{
@@ -128,7 +164,7 @@ func TestWriteScaffold_GoMod_ShapeAndOrder(t *testing.T) {
 	// module + go directives present.
 	for _, want := range []string{
 		"module example.com/petmcp",
-		"go 1.23",
+		"go 1.26",
 		"require (",
 		"github.com/dipjyotimetia/openapi-go-mcp v1.2.3",
 		"github.com/modelcontextprotocol/go-sdk",
@@ -142,6 +178,26 @@ func TestWriteScaffold_GoMod_ShapeAndOrder(t *testing.T) {
 	m := strings.Index(src, "modelcontextprotocol")
 	if d < 0 || m < 0 || d > m {
 		t.Errorf("require block must be sorted (dipjyotimetia before modelcontextprotocol); got\n%s", src)
+	}
+}
+
+func TestGenerate_ProxyPreflightsScaffoldCollisions(t *testing.T) {
+	out := t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "main.go"), []byte("// user-owned"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := mustLoad(t, `openapi: 3.0.0
+info: {title: Atomic, version: "1"}
+paths:
+  /things:
+    get: {operationId: listThings, responses: {"200": {description: ok}}}
+`)
+	_, err := Generate(doc, Options{Mode: ModeProxy, OutDir: out, PackageName: "atomicmcp", ModulePath: "example.com/atomic"})
+	if err == nil {
+		t.Fatal("Generate succeeded despite user-owned main.go")
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "atomicmcp", "atomicmcp.mcp.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("proxy generation left partial MCP output: %v", statErr)
 	}
 }
 
@@ -163,6 +219,134 @@ func TestWriteScaffold_GoMod_ReplaceDirective(t *testing.T) {
 	body, _ := os.ReadFile(filepath.Join(out, "go.mod"))
 	if !strings.Contains(string(body), "replace github.com/dipjyotimetia/openapi-go-mcp => ../..") {
 		t.Errorf("expected replace directive in go.mod:\n%s", string(body))
+	}
+}
+
+func TestScaffoldSDKDependenciesMatchGeneratorGoMod(t *testing.T) {
+	goMod, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatalf("read generator go.mod: %v", err)
+	}
+
+	requireVersions := make(map[string]string)
+	indirect := make(map[string]bool)
+	inRequireBlock := false
+	for _, line := range strings.Split(string(goMod), "\n") {
+		line = strings.TrimSpace(line)
+		switch line {
+		case "require (":
+			inRequireBlock = true
+			continue
+		case ")":
+			inRequireBlock = false
+			continue
+		}
+		if !inRequireBlock || line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			requireVersions[fields[0]] = fields[1]
+			indirect[fields[0]] = strings.Contains(line, "// indirect")
+		}
+	}
+
+	for sdk, dep := range mcpSDKDeps {
+		if got := requireVersions[dep.Module]; got != dep.Version {
+			t.Errorf("%s scaffold dependency = %q; generator go.mod requires %q", sdk, dep.Version, got)
+		}
+		if indirect[dep.Module] {
+			t.Errorf("%s scaffold dependency %q must remain a direct generator dependency", sdk, dep.Module)
+		}
+	}
+}
+
+func TestWriteScaffold_RejectsDevelopmentBuildWithoutOverride(t *testing.T) {
+	originalReadBuildInfo := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
+	}
+	t.Cleanup(func() { readBuildInfo = originalReadBuildInfo })
+
+	err := WriteScaffold(Options{
+		Mode:        ModeProxy,
+		OutDir:      t.TempDir(),
+		PackageName: "petmcp",
+		ModulePath:  "example.com/petmcp",
+	}, newScaffoldDoc("Petstore"), nil)
+	if err == nil || !strings.Contains(err.Error(), "RuntimeVersion") {
+		t.Fatalf("expected development-build error that names the override, got %v", err)
+	}
+}
+
+func TestWriteScaffold_UsesOptionsRuntimeVersionForDevelopmentBuild(t *testing.T) {
+	originalReadBuildInfo := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
+	}
+	t.Cleanup(func() { readBuildInfo = originalReadBuildInfo })
+
+	out := t.TempDir()
+	err := WriteScaffold(Options{
+		Mode:           ModeProxy,
+		OutDir:         out,
+		PackageName:    "petmcp",
+		ModulePath:     "example.com/petmcp",
+		RuntimeVersion: "v1.2.3",
+	}, newScaffoldDoc("Petstore"), nil)
+	if err != nil {
+		t.Fatalf("WriteScaffold: %v", err)
+	}
+	goMod, err := os.ReadFile(filepath.Join(out, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(goMod), "github.com/dipjyotimetia/openapi-go-mcp v1.2.3") {
+		t.Fatalf("go.mod did not use Options.RuntimeVersion:\n%s", goMod)
+	}
+}
+
+func TestRuntimeVersionForScaffold_RejectsUnresolvedBuildVersion(t *testing.T) {
+	_, err := runtimeVersionForScaffold(ScaffoldOverrides{}, "(devel)")
+	if err == nil || !strings.Contains(err.Error(), "RuntimeVersion") {
+		t.Fatalf("expected unresolved build version error that names the override, got %v", err)
+	}
+}
+
+func TestRuntimeVersionForScaffold_AcceptsExplicitVersionOrReplaceOverride(t *testing.T) {
+	tests := []struct {
+		name     string
+		override ScaffoldOverrides
+		want     string
+	}{
+		{
+			name:     "version",
+			override: ScaffoldOverrides{RuntimeVersion: "v1.2.3"},
+			want:     "v1.2.3",
+		},
+		{
+			name:     "replace",
+			override: ScaffoldOverrides{RuntimeReplace: "../runtime"},
+			want:     "v0.0.0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := runtimeVersionForScaffold(tt.override, "(devel)")
+			if err != nil {
+				t.Fatalf("runtimeVersionForScaffold: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("runtime version = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRuntimeVersionForScaffold_RejectsInvalidExplicitVersion(t *testing.T) {
+	_, err := runtimeVersionForScaffold(ScaffoldOverrides{RuntimeVersion: "devel"}, "(devel)")
+	if err == nil || !strings.Contains(err.Error(), "invalid RuntimeVersion") {
+		t.Fatalf("expected invalid RuntimeVersion error, got %v", err)
 	}
 }
 

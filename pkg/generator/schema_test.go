@@ -55,6 +55,39 @@ func TestConvert_Nullable(t *testing.T) {
 	}
 }
 
+func TestConvert_NullableEnumIncludesNull(t *testing.T) {
+	s := openapi3.NewStringSchema()
+	s.Nullable = true
+	s.Enum = []any{"active"}
+	got := NewSchemaConverter(false).Convert(&openapi3.SchemaRef{Value: s})
+	enum := got["enum"].([]any)
+	if len(enum) != 2 || enum[1] != nil {
+		t.Fatalf("nullable enum = %#v, want [active <nil>]", enum)
+	}
+}
+
+func TestConvert_OpenAICompat_AllOfMergesSiblingProperties(t *testing.T) {
+	doc := parseSchemas(t, `openapi: 3.0.0
+info: {title: t, version: "1"}
+paths: {}
+components:
+  schemas:
+    Child:
+      allOf:
+        - type: object
+          required: [inherited]
+          properties: {inherited: {type: string}}
+      type: object
+      required: [own]
+      properties: {own: {type: string}}
+`)
+	got := NewSchemaConverter(true).Convert(doc.Components.Schemas["Child"])
+	props := got["properties"].(map[string]any)
+	if props["inherited"] == nil || props["own"] == nil {
+		t.Fatalf("flattened allOf properties = %#v", props)
+	}
+}
+
 func TestConvert_NamedRef(t *testing.T) {
 	doc := `
 openapi: 3.0.0

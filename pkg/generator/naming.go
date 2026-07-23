@@ -17,8 +17,8 @@ import (
 	"unicode"
 )
 
-// MaxToolNameLen is the official MCP tool-name length limit.
-const MaxToolNameLen = 128
+// MaxToolNameLen is the portable MCP/LLM tool-name length limit.
+const MaxToolNameLen = 64
 
 // MangleHeadIfTooLong truncates name to fit within maxLen, replacing the head
 // with a deterministic base-36 SHA-256 prefix so the most-specific tail is
@@ -52,14 +52,29 @@ func base36(b []byte) string {
 }
 
 // ToolName builds a tool name from an OpenAPI operationId, falling back to a
-// METHOD_path-based name if operationId is empty. The result is sanitized
-// (only [A-Za-z0-9_.-]) and length-mangled to fit MaxToolNameLen.
+// METHOD_path-based name if operationId is empty. The result satisfies the
+// portable MCP/LLM tool-name pattern [A-Za-z][A-Za-z0-9_-]{0,63}.
 func ToolName(operationID, httpMethod, path string) string {
 	raw := operationID
 	if raw == "" {
 		raw = httpMethod + "_" + sanitizePath(path)
 	}
-	return MangleHeadIfTooLong(sanitize(raw), MaxToolNameLen)
+	name := sanitize(raw)
+	if name == "" || !isASCIILetter(name[0]) {
+		name = "tool_" + name
+	}
+	name = MangleHeadIfTooLong(name, MaxToolNameLen)
+	if !isASCIILetter(name[0]) {
+		// MangleHeadIfTooLong uses a base-36 hash, which may begin with a
+		// digit. Replacing that character retains the deterministic hash/tail
+		// shape while preserving the required leading letter.
+		name = "t" + name[1:]
+	}
+	return name
+}
+
+func isASCIILetter(b byte) bool {
+	return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z'
 }
 
 // PascalCase produces an UpperCamelCase Go identifier from an operationId.
@@ -93,7 +108,7 @@ func sanitize(s string) string {
 		switch {
 		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
-		case r == '_' || r == '.' || r == '-':
+		case r == '_' || r == '-':
 			b.WriteRune(r)
 		default:
 			b.WriteRune('_')

@@ -64,6 +64,7 @@ func run() int {
 		mode            = flag.String("mode", "companion", "emission mode: \"companion\" (default — emit a *.mcp.go that delegates to a user-supplied oapi-codegen client) or \"proxy\" (emit a runnable Go module: *.mcp.go + main.go + go.mod + README, with env-var-driven auth derived from the spec's securitySchemes)")
 		modulePath      = flag.String("module", "", "Go module path written into the scaffold's go.mod; required when -mode=proxy, rejected otherwise. In batch mode treated as a base path; per-spec slug is appended.")
 		sdk             = flag.String("sdk", "gosdk", "MCP SDK adapter the proxy scaffold imports: \"gosdk\" (default, modelcontextprotocol/go-sdk) or \"mark3labs\" (mark3labs/mcp-go). Ignored in companion mode.")
+		runtimeVersion  = flag.String("runtime-version", "", "version of github.com/dipjyotimetia/openapi-go-mcp to pin in a proxy scaffold; normally inferred for released binaries, required for proxy scaffolds from an unversioned development build")
 		showVersion     = flag.Bool("version", false, "print version information and exit")
 	)
 	flag.Parse()
@@ -128,10 +129,16 @@ func run() int {
 		}
 	}
 
+	proxyRuntimeVersion := *runtimeVersion
+	if proxyRuntimeVersion == "" && resolveVersion() != "dev" {
+		proxyRuntimeVersion = resolveVersion()
+	}
+
 	baseOpts := generator.Options{
 		Mode:              genMode,
 		ModulePath:        *modulePath,
 		SDK:               *sdk,
+		RuntimeVersion:    proxyRuntimeVersion,
 		OutDir:            *outDir,
 		PackageName:       *pkgName,
 		ClientImport:      *clientImport,

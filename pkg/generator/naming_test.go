@@ -9,9 +9,12 @@
 package generator
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var portableToolName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
 
 func TestMangleHeadIfTooLong_ShortNameUnchanged(t *testing.T) {
 	got := MangleHeadIfTooLong("getPet", MaxToolNameLen)
@@ -121,10 +124,35 @@ func TestToolName_SanitisesIllegalCharacters(t *testing.T) {
 }
 
 func TestToolName_PreservesAllowedPunctuation(t *testing.T) {
-	// Underscore, dot, and dash are kept verbatim (MCP allows them in tool names).
+	// Underscore and dash are portable MCP/LLM tool-name punctuation.
 	got := ToolName("get.pet-v1_alpha", "", "")
-	if got != "get.pet-v1_alpha" {
-		t.Errorf("allowed punctuation should round-trip; got %q", got)
+	if got != "get_pet-v1_alpha" {
+		t.Errorf("portable punctuation should be retained or normalized; got %q", got)
+	}
+}
+
+func TestToolName_ProducesPortableNames(t *testing.T) {
+	cases := []string{
+		"get-pet_v1",
+		"123-pets",
+		".starts-with-dot",
+		"\u00fcber pets",
+		strings.Repeat("a", 80),
+	}
+	for _, operationID := range cases {
+		t.Run(operationID, func(t *testing.T) {
+			got := ToolName(operationID, "", "")
+			if !portableToolName.MatchString(got) {
+				t.Errorf("ToolName(%q) = %q, which is not portable", operationID, got)
+			}
+		})
+	}
+}
+
+func TestToolName_LeavesAlreadyPortableNameStable(t *testing.T) {
+	const name = "get-pet_v1"
+	if got := ToolName(name, "", ""); got != name {
+		t.Errorf("ToolName(%q) = %q, want unchanged", name, got)
 	}
 }
 

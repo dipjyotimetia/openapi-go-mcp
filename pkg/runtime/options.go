@@ -36,11 +36,26 @@ type Config struct {
 	// handlers should apply via context.WithTimeout before delegating to the
 	// upstream oapi-codegen client. Zero means "no per-request timeout".
 	RequestTimeout time.Duration
+	// MaxResponseBytes bounds an upstream response before it is transformed
+	// into an MCP result. Zero uses DefaultMaxResponseBytes.
+	MaxResponseBytes int64
+	// MTLSConfigured is true only when HTTPClient was intentionally configured
+	// for client-certificate authentication. It keeps OpenAPI mutualTLS schemes
+	// fail-closed instead of treating any custom HTTP client as proof of mTLS.
+	MTLSConfigured bool
+	// AllowInsecureAuth permits credentials on an HTTP upstream. It is intended
+	// only for isolated local development; production defaults to HTTPS-only.
+	AllowInsecureAuth bool
 	// ServerVariables holds substitutions for OpenAPI `servers[*].variables`
 	// templated URLs (e.g. {scheme}, {host}). Generated code may read this
 	// when constructing the upstream client base URL. Empty == use whatever
 	// default the spec declared.
 	ServerVariables map[string]string
+	// RequestAuthProvider signs requests for security schemes whose credential
+	// acquisition is deployment-specific (for example OIDC workload identity
+	// or AWS SigV4). Generated proxy handlers invoke it only when the OpenAPI
+	// operation selects such a scheme, and fail closed when it is absent.
+	RequestAuthProvider RequestAuthProvider
 }
 
 // ExtraProperty defines an additional schema property to add to every tool's
@@ -89,12 +104,40 @@ func WithHTTPClient(c *http.Client) Option {
 	}
 }
 
+// WithMTLSHTTPClient configures an HTTP client that already enforces mTLS.
+// Callers can construct it with HTTPClientWithMTLS. Generated mTLS scaffolds
+// use this option so an OpenAPI mutualTLS requirement cannot silently fall
+// back to an ordinary custom HTTP client.
+func WithMTLSHTTPClient(c *http.Client) Option {
+	return func(cfg *Config) {
+		cfg.HTTPClient = c
+		cfg.MTLSConfigured = c != nil
+	}
+}
+
+// WithAllowInsecureAuth permits authenticated requests to an HTTP upstream.
+// Use only for local development; the default rejects credential-bearing
+// requests unless their final URL uses HTTPS.
+func WithAllowInsecureAuth() Option {
+	return func(cfg *Config) {
+		cfg.AllowInsecureAuth = true
+	}
+}
+
 // WithRequestTimeout sets a per-tool-call request deadline. Generated
 // handlers may wrap the inbound context with context.WithTimeout(d) before
 // delegating to the upstream client.
 func WithRequestTimeout(d time.Duration) Option {
 	return func(cfg *Config) {
 		cfg.RequestTimeout = d
+	}
+}
+
+// WithMaxResponseBytes bounds the upstream response size accepted by generated
+// and dynamic proxy handlers. Values less than one use DefaultMaxResponseBytes.
+func WithMaxResponseBytes(n int64) Option {
+	return func(cfg *Config) {
+		cfg.MaxResponseBytes = n
 	}
 }
 
@@ -108,6 +151,14 @@ func WithServerVariables(vars map[string]string) Option {
 			cfg.ServerVariables = map[string]string{}
 		}
 		maps.Copy(cfg.ServerVariables, vars)
+	}
+}
+
+// WithRequestAuthProvider configures a custom request signer for generated
+// proxy operations that declare an OpenID Connect or custom HTTP auth scheme.
+func WithRequestAuthProvider(provider RequestAuthProvider) Option {
+	return func(cfg *Config) {
+		cfg.RequestAuthProvider = provider
 	}
 }
 
@@ -174,12 +225,17 @@ func AddExtraPropertiesToTool(tool Tool, properties []ExtraProperty) Tool {
 		default:
 			t = "string"
 		}
-		entry := map[string]any{"type": t}
+		var entry map[string]any
+		if tool.StrictInputSchema && !p.Required {
+			entry = map[string]any{"type": []any{t, "null"}}
+		} else {
+			entry = map[string]any{"type": t}
+		}
 		if p.Description != "" {
 			entry["description"] = p.Description
 		}
 		props[p.Name] = entry
-		if p.Required {
+		if p.Required || tool.StrictInputSchema {
 			required = append(required, p.Name)
 		}
 	}

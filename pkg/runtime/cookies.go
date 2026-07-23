@@ -19,6 +19,11 @@ import (
 // upstream client. Generated code populates it from args["cookie"].
 type CookieValues map[string]string
 
+// CookiePairs preserves every cookie pair emitted by OpenAPI serialization.
+// It supports repeated names for exploded arrays and empty values, both of
+// which a map-based representation cannot faithfully retain.
+type CookiePairs []ProxyCookie
+
 // CookieRequestEditor returns a request editor that adds each non-empty
 // cookie in values to outgoing HTTP requests via req.AddCookie. The returned
 // function's signature matches oapi-codegen's RequestEditorFn (which is
@@ -45,6 +50,18 @@ func CookieRequestEditor(values CookieValues) func(ctx context.Context, req *htt
 			// This is the client side: we're attaching a Cookie request
 			// header, where only Name+Value are wire-relevant per RFC 6265 §4.2.
 			req.AddCookie(&http.Cookie{Name: name, Value: v}) // #nosec G124
+		}
+		return nil
+	}
+}
+
+// CookiePairsRequestEditor adds serialized cookie pairs to an outgoing
+// request. Unlike CookieRequestEditor, it preserves duplicate names and empty
+// values required by OpenAPI form/explode cookie parameters.
+func CookiePairsRequestEditor(values CookiePairs) func(ctx context.Context, req *http.Request) error {
+	return func(_ context.Context, req *http.Request) error {
+		for _, value := range values {
+			req.AddCookie(&http.Cookie{Name: value.Name, Value: value.Value}) // #nosec G124
 		}
 		return nil
 	}

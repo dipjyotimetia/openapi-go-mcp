@@ -11,6 +11,7 @@ package generator
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -161,23 +162,55 @@ func TestParseSecuritySchemes_OAuth2AsBearer(t *testing.T) {
 	}
 }
 
-func TestParseSecuritySchemes_OpenIDConnectIsDropped(t *testing.T) {
+func TestParseSecuritySchemes_OAuth2ClientCredentials(t *testing.T) {
+	doc := docWithSchemes(openapi3.SecuritySchemes{
+		"service": schemeRef(&openapi3.SecurityScheme{Type: "oauth2", Flows: &openapi3.OAuthFlows{ClientCredentials: &openapi3.OAuthFlow{
+			TokenURL: "https://issuer.example/token",
+			Scopes:   openapi3.StringMap[string]{"write": "Write", "read": "Read"},
+		}}}),
+	})
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 {
+		t.Fatalf("client credentials scheme: %+v", got)
+	}
+	if got[0].OAuthTokenURL != "https://issuer.example/token" || got[0].ClientIDEnvVar != "OAUTH2_CLIENT_ID_SERVICE" || got[0].ClientSecretEnvVar != "OAUTH2_CLIENT_SECRET_SERVICE" {
+		t.Errorf("client credentials fields: %+v", got[0])
+	}
+	if strings.Join(got[0].OAuthScopes, ",") != "read,write" {
+		t.Errorf("scopes must be sorted: %+v", got[0].OAuthScopes)
+	}
+}
+
+func TestParseSecuritySchemes_MTLSSupported(t *testing.T) {
+	doc := docWithSchemes(openapi3.SecuritySchemes{
+		"mtls": schemeRef(&openapi3.SecurityScheme{Type: "mutualTLS"}),
+	})
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 || got[0].Kind != SecurityMTLS {
+		t.Errorf("mutualTLS must be supported: %+v", got)
+	}
+}
+
+func TestResolveSecurityPolicy_UsesOnlyOperationOAuthScopes(t *testing.T) {
+	reqs := openapi3.SecurityRequirements{{"oauth": []string{"write"}}}
+	policy := ResolveSecurityPolicy(&openapi3.Operation{Security: &reqs}, &openapi3.T{}, []SecurityScheme{{
+		Name: "oauth", Kind: SecurityOAuth2, OAuthTokenURL: "https://issuer.example/token", OAuthScopes: []string{"read", "write"},
+	}})
+	if len(policy.Alternatives) != 1 || len(policy.Alternatives[0]) != 1 {
+		t.Fatalf("policy = %+v", policy)
+	}
+	if got := policy.Alternatives[0][0].OAuthRequestScopes; !reflect.DeepEqual(got, []string{"write"}) {
+		t.Errorf("request scopes = %v, want [write]", got)
+	}
+}
+
+func TestParseSecuritySchemes_OpenIDConnectUsesCustomProvider(t *testing.T) {
 	doc := docWithSchemes(openapi3.SecuritySchemes{
 		"oidc": schemeRef(&openapi3.SecurityScheme{Type: "openIdConnect"}),
 	})
-	sink := newDiagSink(&bytes.Buffer{})
-	got := ParseSecuritySchemes(doc, sink)
-	if len(got) != 0 {
-		t.Errorf("openIdConnect must be skipped; got %+v", got)
-	}
-	hasWarn := false
-	for _, d := range sink.finalize() {
-		if d.Code == DiagUnsupportedSecurityScheme {
-			hasWarn = true
-		}
-	}
-	if !hasWarn {
-		t.Errorf("expected diagnostic for unsupported openIdConnect scheme")
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 || got[0].Kind != SecurityCustom {
+		t.Errorf("openIdConnect must use a custom provider; got %+v", got)
 	}
 }
 
@@ -239,6 +272,15 @@ func TestResolveOperationSecurity_EmptyOpSecurityIsAnonymous(t *testing.T) {
 	}
 }
 
+func TestResolveSecurityPolicy_EmptySecurityListIsAnonymous(t *testing.T) {
+	doc := &openapi3.T{Security: openapi3.SecurityRequirements{openapi3.SecurityRequirement{"docBearer": {}}}}
+	empty := openapi3.SecurityRequirements{}
+	policy := ResolveSecurityPolicy(&openapi3.Operation{Security: &empty}, doc, []SecurityScheme{{Name: "docBearer"}})
+	if !policy.Anonymous || policy.Required || len(policy.Alternatives) != 0 {
+		t.Errorf("security: [] must override global auth as anonymous, got %+v", policy)
+	}
+}
+
 func TestResolveOperationSecurity_NoSecurityAnywhereIsAnonymous(t *testing.T) {
 	got, anon := ResolveOperationSecurity(&openapi3.Operation{}, &openapi3.T{}, nil)
 	if !anon || got != nil {
@@ -281,5 +323,39 @@ func TestResolveOperationSecurity_DeterministicOrderWithinRequirement(t *testing
 	names := []string{got[0].Name, got[1].Name, got[2].Name}
 	if !reflect.DeepEqual(names, []string{"a", "b", "c"}) {
 		t.Errorf("expected alphabetic order within a requirement; got %v", names)
+	}
+}
+
+func TestResolveSecurityPolicy_PreservesORAlternativesAndFailsClosed(t *testing.T) {
+	parsed := []SecurityScheme{
+		{Name: "apiKey", Kind: SecurityAPIKey, EnvVar: "API_KEY"},
+		{Name: "bearer", Kind: SecurityHTTPBearer, EnvVar: "BEARER_TOKEN"},
+	}
+	reqs := openapi3.SecurityRequirements{
+		openapi3.SecurityRequirement{"apiKey": {}},
+		openapi3.SecurityRequirement{"bearer": {}},
+	}
+
+	policy := ResolveSecurityPolicy(&openapi3.Operation{Security: &reqs}, &openapi3.T{}, parsed)
+	if policy.Anonymous {
+		t.Fatal("declared alternatives must not be treated as anonymous")
+	}
+	if !policy.Required {
+		t.Fatal("declared security must remain required even when no credential is configured")
+	}
+	if len(policy.Alternatives) != 2 {
+		t.Fatalf("alternatives = %d, want 2", len(policy.Alternatives))
+	}
+	if got := policy.Alternatives[0][0].Name; got != "apiKey" {
+		t.Errorf("first alternative = %q, want apiKey", got)
+	}
+	if got := policy.Alternatives[1][0].Name; got != "bearer" {
+		t.Errorf("second alternative = %q, want bearer", got)
+	}
+
+	unsupportedReqs := openapi3.SecurityRequirements{openapi3.SecurityRequirement{"unparsed": {}}}
+	unsupported := ResolveSecurityPolicy(&openapi3.Operation{Security: &unsupportedReqs}, &openapi3.T{}, parsed)
+	if unsupported.Anonymous || !unsupported.Required || len(unsupported.Alternatives) != 0 {
+		t.Errorf("unsupported declared security must fail closed: %+v", unsupported)
 	}
 }

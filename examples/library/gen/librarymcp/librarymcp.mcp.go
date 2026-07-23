@@ -21,9 +21,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ library.ClientWithResponsesInterface = (library.ClientWithResponsesInterface)(nil)
 
-// RegisterLibraryAPIClient registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// RegisterLibraryAPIClient registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterLibraryAPIClientWithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// RegisterLibraryAPIClientOpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func RegisterLibraryAPIClientOpenAI(s runtime.MCPServer, c library.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterLibraryAPIClientWithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// RegisterLibraryAPIClientWithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func RegisterLibraryAPIClientWithProvider(s runtime.MCPServer, c library.ClientWithResponsesInterface, provider runtime.LLMProvider, opts ...runtime.Option) {
+
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -32,11 +45,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// GET /authors/{authorId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getAuthor",
-			Description:     "Fetch an author by id",
-			RawInputSchema:  json.RawMessage(input_getAuthor),
-			RawOutputSchema: json.RawMessage(output_getAuthor),
-			Annotations:     &runtime.ToolAnnotations{Title: "Fetch an author by id", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getAuthor",
+			Description:       "Fetch an author by id",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getAuthor, input_openai_getAuthor),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getAuthor),
+			Annotations:       &runtime.ToolAnnotations{Title: "Fetch an author by id", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -51,7 +65,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			}
 			resp, err := c.GetAuthorWithResponse(ctx, authorId)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -68,10 +82,11 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// GET /books
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "listBooks",
-			Description:    "List books",
-			RawInputSchema: json.RawMessage(input_listBooks),
-			Annotations:    &runtime.ToolAnnotations{Title: "List books", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "listBooks",
+			Description:       "List books",
+			RawInputSchema:    inputSchemaForProvider(provider, input_listBooks, input_openai_listBooks),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "List books", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -86,7 +101,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			}
 			resp, err := c.ListBooksWithResponse(ctx, &params)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -103,11 +118,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// POST /books
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "createBook",
-			Description:     "Add a book",
-			RawInputSchema:  json.RawMessage(input_createBook),
-			RawOutputSchema: json.RawMessage(output_createBook),
-			Annotations:     &runtime.ToolAnnotations{Title: "Add a book"},
+			Name:              "createBook",
+			Description:       "Add a book",
+			RawInputSchema:    inputSchemaForProvider(provider, input_createBook, input_openai_createBook),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_createBook),
+			Annotations:       &runtime.ToolAnnotations{Title: "Add a book"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -126,7 +142,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			}
 			resp, err := c.CreateBookWithResponse(ctx, &params, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -143,10 +159,11 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// DELETE /books/{bookId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "deleteBook",
-			Description:    "Delete a book",
-			RawInputSchema: json.RawMessage(input_deleteBook),
-			Annotations:    &runtime.ToolAnnotations{Title: "Delete a book", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
+			Name:              "deleteBook",
+			Description:       "Delete a book",
+			RawInputSchema:    inputSchemaForProvider(provider, input_deleteBook, input_openai_deleteBook),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Delete a book", IdempotentHint: true, DestructiveHint: runtime.BoolPtr(true)},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -161,7 +178,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			}
 			resp, err := c.DeleteBookWithResponse(ctx, bookId)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -178,11 +195,12 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 	// GET /books/{bookId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getBook",
-			Description:     "Fetch a book by id",
-			RawInputSchema:  json.RawMessage(input_getBook),
-			RawOutputSchema: json.RawMessage(output_getBook),
-			Annotations:     &runtime.ToolAnnotations{Title: "Fetch a book by id", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getBook",
+			Description:       "Fetch a book by id",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getBook, input_openai_getBook),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getBook),
+			Annotations:       &runtime.ToolAnnotations{Title: "Fetch a book by id", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -197,7 +215,7 @@ func RegisterLibraryAPIClient(s runtime.MCPServer, c library.ClientWithResponses
 			}
 			resp, err := c.GetBookWithResponse(ctx, bookId)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -224,9 +242,41 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+
 const input_getAuthor = `{
   "properties": {
     "path": {
+      "properties": {
+        "authorId": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "authorId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getAuthor = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
       "properties": {
         "authorId": {
           "format": "int64",
@@ -302,6 +352,48 @@ const input_listBooks = `{
   "type": "object"
 }`
 
+const input_openai_listBooks = `{
+  "additionalProperties": false,
+  "properties": {
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "X-API-Key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "X-API-Key"
+      ],
+      "type": "object"
+    },
+    "query": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "limit"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "header",
+    "query"
+  ],
+  "type": "object"
+}`
+
 const input_createBook = `{
   "$defs": {
     "BookInput": {
@@ -340,6 +432,46 @@ const input_createBook = `{
   "required": [
     "header",
     "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_createBook = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "authorId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authorId",
+        "title"
+      ],
+      "type": "object"
+    },
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "X-API-Key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "X-API-Key"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body",
+    "header"
   ],
   "type": "object"
 }`
@@ -412,9 +544,55 @@ const input_deleteBook = `{
   "type": "object"
 }`
 
+const input_openai_deleteBook = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "bookId": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bookId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
 const input_getBook = `{
   "properties": {
     "path": {
+      "properties": {
+        "bookId": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bookId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getBook = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
       "properties": {
         "bookId": {
           "format": "int64",

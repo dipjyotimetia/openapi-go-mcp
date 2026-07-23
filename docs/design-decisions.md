@@ -14,7 +14,7 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 - **Reviewable diffs.** The output is gofmt-clean Go source, version-controlled. PR reviewers see exactly what the MCP server will expose — no runtime surprises.
 - **No reflection / no schema-walking at request time.** Cold-start cost is zero; tool registration is straight-line code.
 
-**Cost.** Spec changes require a regeneration step. A runtime registration path is on the roadmap (`TODO.md`) but is not the default for the reasons above.
+**Cost.** Spec changes require a regeneration step. Startup-only dynamic registration is also available through `pkg/dynamic`, but code generation remains the default when typed-client compile-time safety and reviewable output matter.
 
 ## 2. `runtime.MCPServer` interface, not vendor lock-in
 
@@ -80,9 +80,9 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 **Cost.** OpenAI users need to know the flag exists. Documented in [`usage-patterns.md`](usage-patterns.md#pattern-7--strict-mode-schema-for-openai-tool-calls) and the README CLI section.
 
-## 6. Request bodies: JSON + form + multipart + raw fallback; responses: JSON only
+## 6. Request bodies and content-aware responses
 
-**Decision.** Request bodies support `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `application/octet-stream`, `text/*`, and any other content type via a raw-string fallback (`application/xml` and friends). When an operation declares more than one, the generator picks deterministically in that priority order. Response bodies still must be JSON-decodable; non-JSON responses are surfaced as raw bytes through `runtime.NewToolResultJSON`.
+**Decision.** Request bodies support `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `application/octet-stream`, `text/*`, and any other content type via a raw-string fallback (`application/xml` and friends). When an operation declares more than one, the generator picks deterministically in that priority order. Responses preserve their media semantics: JSON is structured, text is text, image/audio use native MCP blocks, and generic binary data uses embedded resources.
 
 **Alternative considered.** Keep the original JSON-only stance (the v0.1.0 release shipped this way) and recommend a wrapper service for multipart APIs.
 
@@ -92,7 +92,7 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 - **MCP arguments are still JSON.** Binary fields are accepted as base64-encoded strings; the runtime helper `BuildMultipartBody` decodes them and writes the parts. The complexity is contained in the runtime, not pushed to the LLM.
 - **Fixed priority is deterministic.** No new CLI flag is needed; the priority order is documented in the architecture doc and locked by the unit tests.
 
-**Why responses stay JSON-only.** Response negotiation (Accept headers, content-sniffing, decoding to typed Go) is a separate, larger surface area. `NewToolResultJSON` already passes through raw bytes for non-JSON responses; first-class non-JSON response support is tracked separately.
+**Why response selection remains conservative.** The generator does not invent `Accept` negotiation or typed response decoding; it preserves the upstream response content type through `runtime.NewToolResultFromHTTP` instead.
 
 **Cost.** Multipart bodies with nested binary fields, OpenAPI `encoding[field]` per-part metadata, and a header parameter named `Content-Type` are all known gaps documented in [`architecture.md`](architecture.md#known-limitations). Workaround for nested binary fields: flatten the body schema, or use a wrapper service.
 
@@ -169,7 +169,7 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 ## 13. Dual-mode (companion + proxy) rather than replacing one with the other
 
-**Decision.** Proxy mode (`-mode=proxy`) ships alongside companion mode. Companion mode stays the default; its output is byte-for-byte unchanged (golden test guards it).
+**Decision.** Proxy mode (`-mode=proxy`) ships alongside companion mode. Companion mode stays the default; its deterministic output is golden-test guarded.
 
 **Alternative considered.** Make proxy mode the default and demote companion to opt-in; or replace companion entirely.
 
@@ -180,31 +180,31 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 **Cost.** Two codegen templates (`fileTemplate` + `fileTemplateProxy`), two assertions in the renderer, and a small `Options.Mode` branch. The CLI gets three new flags (`-mode`, `-module`, `-sdk`) but they're inert in the default path.
 
-## 14. Env-var-only auth, with conventions matched to harsha-iiiv
+## 14. Environment-first auth with production extension points
 
-**Decision.** Proxy mode authenticates from environment variables. No OAuth2 token-exchange flow, no `--auth-config` YAML, no JSON-mounted credentials. Variable names mirror the TypeScript prior art so users moving between ecosystems aren't surprised: `API_KEY_<NAME>`, `BEARER_TOKEN_<NAME>`, `BASIC_AUTH_USERNAME_<NAME>` + `BASIC_AUTH_PASSWORD_<NAME>`, `OAUTH2_ACCESS_TOKEN_<NAME>`.
+**Decision.** Proxy mode uses environment-derived credentials for standard schemes and keeps deployment-specific signers as explicit runtime options. Variable names remain predictable: `API_KEY_<NAME>`, `BEARER_TOKEN_<NAME>`, `BASIC_AUTH_USERNAME_<NAME>` + `BASIC_AUTH_PASSWORD_<NAME>`, and `OAUTH2_ACCESS_TOKEN_<NAME>`. An OpenAPI `clientCredentials` flow additionally enables `OAUTH2_CLIENT_ID_<NAME>` + `OAUTH2_CLIENT_SECRET_<NAME>`; tokens are acquired over HTTPS, cached, and refreshed before expiry. `mutualTLS` generated scaffolds load certificate paths from `MTLS_CERT_FILE` / `MTLS_KEY_FILE`, with optional CA and server-name variables. OIDC and SigV4 use `runtime.WithRequestAuthProvider` so the generated package never imports a cloud SDK or guesses an identity mechanism.
 
-**Alternative considered.** Full OAuth2 client_credentials / authorization_code flows with a token-acquisition step at startup; or a config file mapping schemes to specific env vars.
+**Alternative considered.** A generic auth-config YAML, authorization-code browser flow, or cloud-specific generated SDK integrations.
 
 **Why env-only.**
 - **Single line of integration with secret stores.** Vault, AWS Secrets Manager, K8s Secrets, Doppler — all surface as env vars. Building a token-fetch loop inside the generated binary would duplicate machinery the deployment already has.
 - **Conventions over configuration.** A config file is one more thing to keep in sync with the spec. The env-var name is derived from the scheme key once; if you rename the scheme, you rename the var.
-- **OAuth2 → Bearer-from-env is honest.** Most OAuth2 deployments fetch a token via a sidecar (or the platform). The generator's job is to forward it, not re-implement RFC 6749.
+- **Client credentials are bounded and reusable.** This non-interactive OAuth grant is suitable for a server process; authorization-code and discovery flows remain deployment-owned.
 - **Matches the dominant TypeScript prior art.** Users moving from `harsha-iiiv/openapi-mcp-generator` see the same env-var shape and don't need to relearn anything.
 
-**When multiple security requirements apply.** OpenAPI's `security: [ { A }, { B } ]` means "A *or* B is sufficient". Proxy mode picks the first requirement whose schemes are all parseable; everything else is anonymous fallback. Spec authors who need true multi-scheme routing should compose schemes within one requirement (`{ A, B }` = both required), which proxy mode applies in alphabetical order. This trade-off is documented in `pkg/generator/security.go::ResolveOperationSecurity`.
+**When multiple security requirements apply.** OpenAPI's `security: [ { A }, { B } ]` means "A *or* B is sufficient"; `{ A, B }` means both. Proxy and dynamic modes retain every fully supported alternative, choose the first one whose complete credentials are available at call time, and fail closed if none is available. An explicit empty requirement remains anonymous.
 
-**Cost.** No support for token rotation without restart; no support for OIDC discovery, mTLS, AWS SigV4, or other transport-level auth. Users who need those plug in a custom `http.Client` via `runtime.WithHTTPClient` from a companion-mode integration — the escape hatch is intact.
+**Cost.** Authorization-code and device flows, OIDC discovery, and cloud credential acquisition are not generated; the application supplies those through the signer extension point. Credentials are read on calls so a rotated environment value takes effect without regenerating, while a changed client-credentials pair replaces its cached provider.
 
 ## 15. Native media content blocks without a base64 text duplicate
 
-**Decision.** 2xx responses with an `image/*` or `audio/*` content type surface as native MCP `ImageContent` / `AudioContent` blocks, and *only* as those blocks — no base64 copy in the text content or the structured envelope. Detection is a uniform media-type prefix match after the JSON/text checks, so `image/foo+json` stays JSON and `image/svg+xml` counts as an image. Everything MCP has no native type for (video, PDF, arbitrary binary) keeps the base64-text envelope.
+**Decision.** 2xx `image/*` and `audio/*` responses surface as native MCP `ImageContent` / `AudioContent` blocks; PDFs, video, and other binary types surface as embedded blob resources. No binary path duplicates payloads as base64 text or structured content. Generic resource URIs are opaque content-addressed URNs, not fetchable upstream URLs. Detection is a uniform media-type prefix match after the JSON/text checks, so `image/foo+json` stays JSON and `image/svg+xml` counts as an image.
 
 **Alternative considered.** Mirror the payload as base64 into the text block alongside the media block (mark3labs' `NewToolResultImage` helper does this). Rejected: a multi-MB image would ship twice (or three times with the structured envelope) in every tool result, and the media block already carries the bytes in the shape clients render.
 
 **Why the uniform `image/*` rule.** Special-casing `image/svg+xml` (some clients only render raster images) would trade a predictable rule for a guess about client capabilities. Clients that can't render a media type still receive the MIME type and can say so.
 
-**Cost.** Clients that previously parsed base64 out of the text block for image/audio responses must read the media block instead (flagged in the changelog). Video and PDF stay base64 text until embedded-resource support lands (`TODO.md`).
+**Cost.** Clients that previously parsed base64 out of text must read the native media or resource block instead (flagged in the changelog). Binary result size remains bounded by the proxy response limit; first-class progressive streaming is separate work.
 
 ## Non-goals
 
