@@ -360,6 +360,9 @@ func selectResponseHeaders(h http.Header) map[string]string {
 			continue
 		}
 		lower := strings.ToLower(k)
+		if sensitiveResponseHeader(lower) {
+			continue
+		}
 		_, allowed := allowedResponseHeaders[lower]
 		if !allowed {
 			if !strings.HasPrefix(lower, "x-") || xCount >= maxExtraXHeaders {
@@ -377,6 +380,13 @@ func selectResponseHeaders(h http.Header) map[string]string {
 		out[k] = val
 	}
 	return out
+}
+
+func sensitiveResponseHeader(name string) bool {
+	return strings.Contains(name, "authorization") || strings.Contains(name, "api-key") ||
+		strings.Contains(name, "apikey") || strings.Contains(name, "token") ||
+		strings.Contains(name, "secret") || strings.Contains(name, "credential") ||
+		strings.Contains(name, "cookie")
 }
 
 // contentClass labels a response body's content-type for NewToolResultFromHTTP's

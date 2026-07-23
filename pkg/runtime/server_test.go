@@ -310,6 +310,23 @@ func TestNewToolResultFromHTTP_DropsArbitraryHeaders(t *testing.T) {
 	}
 }
 
+func TestNewToolResultFromHTTP_DropsSensitiveXHeaders(t *testing.T) {
+	header := http.Header{}
+	header.Set("X-Request-Id", "keep")
+	header.Set("X-Api-Key", "secret")
+	header.Set("X-Auth-Token", "secret")
+	header.Set("X-Amz-Security-Token", "secret")
+	res := NewToolResultFromHTTP(http.StatusOK, header, nil, "")
+	if res.Headers["X-Request-Id"] != "keep" {
+		t.Fatalf("safe X header was dropped: %#v", res.Headers)
+	}
+	for _, name := range []string{"X-Api-Key", "X-Auth-Token", "X-Amz-Security-Token"} {
+		if _, ok := res.Headers[name]; ok {
+			t.Errorf("sensitive header %s was exposed: %#v", name, res.Headers)
+		}
+	}
+}
+
 func TestClassifyContentType(t *testing.T) {
 	cases := map[string]contentClass{
 		"application/json":                ctJSON,

@@ -334,7 +334,7 @@ func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL
 		}
 		response, err := client.Do(httpReq)
 		if err != nil {
-			return runtime.HandleError(err)
+			return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 		}
 		body, err := runtime.ReadResponseBodyLimit(response, maxResponseBytes)
 		if err != nil {

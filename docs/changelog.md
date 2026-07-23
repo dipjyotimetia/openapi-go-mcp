@@ -50,7 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added — proxy mode
 
-- **`-mode=proxy` emission mode** — new first-class output: a runnable Go module (`main.go` + `go.mod` + `<pkg>/<pkg>.mcp.go` + `README.md`) that proxies MCP tool calls directly to the upstream HTTP API. No `oapi-codegen` step needed; the generated handlers build `*http.Request` objects via `http.NewRequestWithContext` and dispatch through `cfg.HTTPClient.Do`. Companion mode remains the default and is byte-for-byte unchanged (the golden test still passes).
+- **`-mode=proxy` emission mode** — new first-class output: a runnable Go module (`main.go` + `go.mod` + `<pkg>/<pkg>.mcp.go` + `README.md`) that proxies MCP tool calls directly to the upstream HTTP API. No `oapi-codegen` step needed; the generated handlers build `*http.Request` objects via `http.NewRequestWithContext` and dispatch through `cfg.HTTPClient.Do`. Companion mode remains the default and its output is golden-test guarded.
 - **`-module <import-path>` CLI flag** — required iff `-mode=proxy`. Becomes the `module` directive in the generated `go.mod`. In batch mode it's treated as a base path; each spec's slug is appended.
 - **`-sdk={gosdk|mark3labs}` CLI flag** — picks which MCP SDK adapter the generated `main.go` imports. Defaults to `gosdk` (the official `modelcontextprotocol/go-sdk`). Ignored in companion mode.
 - **`Options.Mode`, `Options.ModulePath`, `Options.SDK`** — library-level equivalents of the new flags.

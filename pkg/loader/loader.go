@@ -64,7 +64,11 @@ func Load(ctx context.Context, path string) (*openapi3.T, error) {
 	}
 
 	if isSwagger2(raw) {
-		doc, err := convertSwagger2(raw)
+		var location *url.URL
+		if base, absErr := filepath.Abs(path); absErr == nil {
+			location = &url.URL{Scheme: "file", Path: base}
+		}
+		doc, err := convertSwagger2(ctx, raw, location)
 		if err != nil {
 			return nil, fmt.Errorf("convert swagger 2.0: %w", err)
 		}
@@ -195,7 +199,7 @@ func LoadFromURL(ctx context.Context, rawURL string, opts ...URLLoadOption) (*op
 	}
 
 	if isSwagger2(raw) {
-		doc, err := convertSwagger2(raw)
+		doc, err := convertSwagger2(ctx, raw, parsed)
 		if err != nil {
 			return nil, fmt.Errorf("convert swagger 2.0: %w", err)
 		}
@@ -263,7 +267,7 @@ func isSwagger2(raw []byte) bool {
 	return false
 }
 
-func convertSwagger2(raw []byte) (*openapi3.T, error) {
+func convertSwagger2(ctx context.Context, raw []byte, location *url.URL) (*openapi3.T, error) {
 	jsonBytes, err := yamlOrJSONToJSON(raw)
 	if err != nil {
 		return nil, err
@@ -272,7 +276,10 @@ func convertSwagger2(raw []byte) (*openapi3.T, error) {
 	if err := v2.UnmarshalJSON(jsonBytes); err != nil {
 		return nil, fmt.Errorf("unmarshal swagger 2.0: %w", err)
 	}
-	v3, err := openapi2conv.ToV3(&v2)
+	loader := openapi3.NewLoader()
+	loader.Context = ctx
+	loader.IsExternalRefsAllowed = true
+	v3, err := openapi2conv.ToV3WithLoader(&v2, loader, location)
 	if err != nil {
 		return nil, fmt.Errorf("convert v2 → v3: %w", err)
 	}

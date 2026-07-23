@@ -83,11 +83,43 @@ func WriteScaffold(opts Options, doc *openapi3.T, schemes []SecurityScheme) erro
 // exposed. Used by tests that need to compile the scaffold against the
 // in-tree runtime via a `replace` directive.
 func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []SecurityScheme, ov ScaffoldOverrides) error {
+	files, err := prepareScaffoldFiles(opts, doc, schemes, ov)
+	if err != nil {
+		return err
+	}
+	if err := preflightScaffoldFiles(opts, files); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
+		return fmt.Errorf("scaffold mkdir %s: %w", opts.OutDir, err)
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(opts.OutDir, f.name), f.content, 0o644); err != nil {
+			return fmt.Errorf("scaffold write %s: %w", f.name, err)
+		}
+	}
+	return nil
+}
+
+type scaffoldFile struct {
+	name    string
+	content []byte
+}
+
+func preflightScaffold(opts Options, doc *openapi3.T, schemes []SecurityScheme) error {
+	files, err := prepareScaffoldFiles(opts, doc, schemes, ScaffoldOverrides{RuntimeVersion: opts.RuntimeVersion})
+	if err != nil {
+		return err
+	}
+	return preflightScaffoldFiles(opts, files)
+}
+
+func prepareScaffoldFiles(opts Options, doc *openapi3.T, schemes []SecurityScheme, ov ScaffoldOverrides) ([]scaffoldFile, error) {
 	if opts.Mode != ModeProxy {
-		return nil
+		return nil, nil
 	}
 	if opts.ModulePath == "" {
-		return fmt.Errorf("scaffold: ModulePath is required in proxy mode")
+		return nil, fmt.Errorf("scaffold: ModulePath is required in proxy mode")
 	}
 	sdk := opts.SDK
 	if sdk == "" {
@@ -95,18 +127,12 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 	}
 	dep, ok := mcpSDKDeps[sdk]
 	if !ok {
-		return fmt.Errorf("scaffold: unsupported SDK %q (expected gosdk or mark3labs)", sdk)
+		return nil, fmt.Errorf("scaffold: unsupported SDK %q (expected gosdk or mark3labs)", sdk)
 	}
-
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
-		return fmt.Errorf("scaffold mkdir %s: %w", opts.OutDir, err)
-	}
-
 	runtimeVersion, err := resolveRuntimeVersion(ov)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	files := []struct {
 		name    string
 		content []byte
@@ -116,7 +142,22 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 		{name: "go.mod", content: []byte(renderScaffoldGoMod(opts, dep, runtimeVersion, ov.RuntimeReplace))},
 		{name: "README.md", content: []byte(renderScaffoldReadme(opts, doc, schemes, sdk))},
 	}
+	prepared := make([]scaffoldFile, 0, len(files))
+	for _, f := range files {
+		body := f.content
+		if f.gofmt {
+			formatted, ferr := format.Source(body)
+			if ferr != nil {
+				return nil, fmt.Errorf("scaffold gofmt %s: %w\n--- source ---\n%s", f.name, ferr, body)
+			}
+			body = formatted
+		}
+		prepared = append(prepared, scaffoldFile{name: f.name, content: body})
+	}
+	return prepared, nil
+}
 
+func preflightScaffoldFiles(opts Options, files []scaffoldFile) error {
 	for _, f := range files {
 		target := filepath.Join(opts.OutDir, f.name)
 		if info, err := os.Stat(target); err == nil {
@@ -128,17 +169,6 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("scaffold stat %s: %w", target, err)
-		}
-		body := f.content
-		if f.gofmt {
-			formatted, ferr := format.Source(body)
-			if ferr != nil {
-				return fmt.Errorf("scaffold gofmt %s: %w\n--- source ---\n%s", f.name, ferr, body)
-			}
-			body = formatted
-		}
-		if err := os.WriteFile(target, body, 0o644); err != nil {
-			return fmt.Errorf("scaffold write %s: %w", target, err)
 		}
 	}
 	return nil
@@ -188,10 +218,9 @@ func runtimeVersionForScaffold(ov ScaffoldOverrides, buildVersion string) (strin
 func renderScaffoldGoMod(opts Options, sdk struct{ Module, Version string }, runtimeVer, replacePath string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "module %s\n\n", opts.ModulePath)
-	// go.mod's `go` directive: pin to a baseline that the generated
-	// source is known to compile against. Matching the generator's own
-	// minor version is too aggressive; pin to the stable baseline.
-	b.WriteString("go 1.23\n\n")
+	// The generated module imports this runtime package, so its toolchain
+	// baseline must match the runtime module's declared Go version.
+	b.WriteString("go 1.26\n\n")
 	requires := []struct{ Module, Version string }{
 		{Module: runtimeModulePath, Version: runtimeVer},
 		sdk,

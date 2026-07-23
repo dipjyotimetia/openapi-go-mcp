@@ -148,21 +148,23 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 			{{- end}}
 			{{- end}}
 			{{- if .CookieParams}}
-			cookieValues := runtime.CookieValues{}
+			cookieValues := runtime.CookiePairs{}
 			{{- range .CookieParams}}
 			{
-				var v string
-				if err := runtime.DecodeCookieParam(req.Arguments, "{{.Name}}", &v); err != nil {
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
+				if err != nil {
 					return runtime.HandleError(err)
 				}
-				cookieValues["{{.Name}}"] = v
+				if present {
+					cookieValues = append(cookieValues, param.Cookies...)
+				}
 			}
 			{{- end}}
-			cookieEditor := runtime.CookieRequestEditor(cookieValues)
+			cookieEditor := runtime.CookiePairsRequestEditor(cookieValues)
 			{{- end}}
 			resp, err := c.{{.CallMethod}}(ctx{{callArgs .}})
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -400,7 +402,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 
 			httpResp, err := httpClient.Do(httpReq)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			respBody, err := runtime.ReadResponseBodyLimit(httpResp, cfg.MaxResponseBytes)
 			if err != nil {

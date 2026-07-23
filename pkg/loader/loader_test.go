@@ -10,6 +10,7 @@ package loader
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -40,6 +41,40 @@ func TestLoad_Swagger2_AutoConverts(t *testing.T) {
 	}
 	if doc.OpenAPI == "" || doc.OpenAPI[:1] != "3" {
 		t.Fatalf("expected v3 document after conversion, got openapi=%q", doc.OpenAPI)
+	}
+}
+
+func TestLoad_Swagger2_ResolvesExternalRefsRelativeToSource(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "defs.yaml"), []byte(`swagger: "2.0"
+info: {title: defs, version: "1"}
+definitions:
+  Thing:
+    type: object
+    properties: {id: {type: string}}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := []byte(`swagger: "2.0"
+info: {title: root, version: "1"}
+paths:
+  /things:
+    get:
+      responses:
+        "200":
+          description: ok
+          schema: {$ref: './defs.yaml#/definitions/Thing'}
+`)
+	path := filepath.Join(dir, "root.yaml")
+	if err := os.WriteFile(path, root, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := Load(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Load external Swagger ref: %v", err)
+	}
+	if doc.Paths.Find("/things").Get.Responses.Status(200).Value.Content["application/json"].Schema.Value == nil {
+		t.Fatal("converted response schema was not resolved")
 	}
 }
 

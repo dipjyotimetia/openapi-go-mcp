@@ -22,9 +22,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ complex.ClientWithResponsesInterface = (complex.ClientWithResponsesInterface)(nil)
 
-// RegisterComplexSchemasAPIClient registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// RegisterComplexSchemasAPIClient registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterComplexSchemasAPIClientWithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// RegisterComplexSchemasAPIClientOpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func RegisterComplexSchemasAPIClientOpenAI(s runtime.MCPServer, c complex.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterComplexSchemasAPIClientWithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// RegisterComplexSchemasAPIClientWithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func RegisterComplexSchemasAPIClientWithProvider(s runtime.MCPServer, c complex.ClientWithResponsesInterface, provider runtime.LLMProvider, opts ...runtime.Option) {
+
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -33,10 +46,11 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// POST /events
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "submitEvent",
-			Description:    "Submit an event (oneOf polymorphism)",
-			RawInputSchema: json.RawMessage(input_submitEvent),
-			Annotations:    &runtime.ToolAnnotations{Title: "Submit an event (oneOf polymorphism)"},
+			Name:              "submitEvent",
+			Description:       "Submit an event (oneOf polymorphism)",
+			RawInputSchema:    inputSchemaForProvider(provider, input_submitEvent, input_openai_submitEvent),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Submit an event (oneOf polymorphism)"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -51,7 +65,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			}
 			resp, err := c.SubmitEventWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -68,11 +82,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// GET /items/{itemId}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "getItem",
-			Description:     "Get an item with enum-typed query filter",
-			RawInputSchema:  json.RawMessage(input_getItem),
-			RawOutputSchema: json.RawMessage(output_getItem),
-			Annotations:     &runtime.ToolAnnotations{Title: "Get an item with enum-typed query filter", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getItem",
+			Description:       "Get an item with enum-typed query filter",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getItem, input_openai_getItem),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getItem),
+			Annotations:       &runtime.ToolAnnotations{Title: "Get an item with enum-typed query filter", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -91,7 +106,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			}
 			resp, err := c.GetItemWithResponse(ctx, itemId, &params)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -108,11 +123,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// POST /profiles
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "createProfile",
-			Description:     "Create a profile (allOf composition)",
-			RawInputSchema:  json.RawMessage(input_createProfile),
-			RawOutputSchema: json.RawMessage(output_createProfile),
-			Annotations:     &runtime.ToolAnnotations{Title: "Create a profile (allOf composition)"},
+			Name:              "createProfile",
+			Description:       "Create a profile (allOf composition)",
+			RawInputSchema:    inputSchemaForProvider(provider, input_createProfile, input_openai_createProfile),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_createProfile),
+			Annotations:       &runtime.ToolAnnotations{Title: "Create a profile (allOf composition)"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -127,7 +143,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			}
 			resp, err := c.CreateProfileWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -144,11 +160,12 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 	// POST /threads
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "createThread",
-			Description:     "Create a thread (recursive Comment tree)",
-			RawInputSchema:  json.RawMessage(input_createThread),
-			RawOutputSchema: json.RawMessage(output_createThread),
-			Annotations:     &runtime.ToolAnnotations{Title: "Create a thread (recursive Comment tree)"},
+			Name:              "createThread",
+			Description:       "Create a thread (recursive Comment tree)",
+			RawInputSchema:    inputSchemaForProvider(provider, input_createThread, input_openai_createThread),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_createThread),
+			Annotations:       &runtime.ToolAnnotations{Title: "Create a thread (recursive Comment tree)"},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -163,7 +180,7 @@ func RegisterComplexSchemasAPIClient(s runtime.MCPServer, c complex.ClientWithRe
 			}
 			resp, err := c.CreateThreadWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -188,6 +205,15 @@ func headerOf(r *http.Response) http.Header {
 		return nil
 	}
 	return r.Header
+}
+
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
 }
 
 const input_submitEvent = `{
@@ -256,6 +282,44 @@ const input_submitEvent = `{
   "type": "object"
 }`
 
+const input_openai_submitEvent = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "description": "Discriminator: kind. Values: login, logout.",
+      "properties": {
+        "ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "login"
+          ],
+          "type": "string"
+        },
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ip",
+        "kind",
+        "userId"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
 const input_getItem = `{
   "properties": {
     "path": {
@@ -291,6 +355,63 @@ const input_getItem = `{
   },
   "required": [
     "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getItem = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId"
+      ],
+      "type": "object"
+    },
+    "query": {
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "archived",
+            "deleted",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "since",
+        "status"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "path",
+    "query"
   ],
   "type": "object"
 }`
@@ -390,6 +511,48 @@ const input_createProfile = `{
   "type": "object"
 }`
 
+const input_openai_createProfile = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "bio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "email": {
+          "format": "email",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bio",
+        "email",
+        "id",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
 const output_createProfile = `{
   "$defs": {
     "BaseProfile": {
@@ -469,6 +632,53 @@ const input_createThread = `{
   "properties": {
     "body": {
       "$ref": "#/$defs/Comment"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_createThread = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "children": {
+          "items": {
+            "additionalProperties": false,
+            "description": "Recursive reference to Comment truncated: the OpenAI-compatible dialect cannot express recursion.",
+            "type": "object"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "children",
+        "createdAt",
+        "id"
+      ],
+      "type": "object"
     }
   },
   "required": [

@@ -1195,12 +1195,24 @@ func makeSchemaNullable(raw any) {
 			schema["type"] = []any{typ, "null"}
 		}
 	case []any:
+		hasNull := false
 		for _, candidate := range typ {
 			if candidate == "null" {
+				hasNull = true
+				break
+			}
+		}
+		if !hasNull {
+			schema["type"] = append(typ, "null")
+		}
+	}
+	if enum, ok := schema["enum"].([]any); ok {
+		for _, value := range enum {
+			if value == nil {
 				return
 			}
 		}
-		schema["type"] = append(typ, "null")
+		schema["enum"] = append(enum, nil)
 	}
 }
 

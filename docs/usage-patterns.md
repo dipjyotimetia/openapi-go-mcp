@@ -334,7 +334,7 @@ openapi-go-mcp \
     -spec petstore.yaml \
     -out gen/petstore-mcp \
     -module github.com/me/petstore-mcp \
-    -runtime-version v1.0.0 # required only when running an unversioned dev build
+    -runtime-version vX.Y.Z # use the release version of this CLI; needed for dev builds
 
 cd gen/petstore-mcp
 go mod tidy
@@ -386,6 +386,7 @@ openapi-go-mcp \
     -spec apis/ \
     -out gen \
     -module github.com/acme/apis-mcp \
+    -runtime-version vX.Y.Z \
     -force
 ```
 

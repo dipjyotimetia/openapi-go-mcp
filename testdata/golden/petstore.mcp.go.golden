@@ -64,7 +64,7 @@ func RegisterSwaggerPetstoreClientWithProvider(s runtime.MCPServer, c petstore.C
 			}
 			resp, err := c.FindPetsWithResponse(ctx, &params)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -101,7 +101,7 @@ func RegisterSwaggerPetstoreClientWithProvider(s runtime.MCPServer, c petstore.C
 			}
 			resp, err := c.AddPetWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -137,7 +137,7 @@ func RegisterSwaggerPetstoreClientWithProvider(s runtime.MCPServer, c petstore.C
 			}
 			resp, err := c.DeletePetWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -174,7 +174,7 @@ func RegisterSwaggerPetstoreClientWithProvider(s runtime.MCPServer, c petstore.C
 			}
 			resp, err := c.FindPetByIDWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil

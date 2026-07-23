@@ -50,6 +50,19 @@ func TestHandleError_PlainError(t *testing.T) {
 	}
 }
 
+func TestSanitizeUpstreamError_DoesNotExposeRequestURL(t *testing.T) {
+	res, err := HandleError(SanitizeUpstreamError(errors.New(`Get "https://api.example.test/things?api_key=super-secret": dial tcp: refused`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.Text, "super-secret") || strings.Contains(res.Text, "api.example.test") {
+		t.Fatalf("upstream error leaked request details: %s", res.Text)
+	}
+	if !strings.Contains(res.Text, "upstream_request_failed") {
+		t.Fatalf("missing stable upstream error code: %s", res.Text)
+	}
+}
+
 func TestToolError_UnwrapPreservesCause(t *testing.T) {
 	root := errors.New("root cause")
 	te := &ToolError{Status: 400, Code: "bad", Message: "wrap", Cause: root}

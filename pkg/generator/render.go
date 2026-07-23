@@ -34,6 +34,11 @@ func generate(doc *openapi3.T, opts Options) ([]Diagnostic, error) {
 	if err != nil {
 		return diags, err
 	}
+	if opts.Mode == ModeProxy {
+		if err := preflightScaffold(opts, doc, collectUsedSchemes(ops)); err != nil {
+			return diags, fmt.Errorf("scaffold: %w", err)
+		}
+	}
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return diags, fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
 	}

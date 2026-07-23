@@ -54,7 +54,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: stable
+          go-version: 1.26.x
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -71,7 +71,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: stable
+          go-version: 1.26.x
 
       - name: Build
         run: go build -o /tmp/openapi-go-mcp ./cmd/openapi-go-mcp
@@ -91,7 +91,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: stable
+          go-version: 1.26.x
 
       # Pin oapi-codegen to the version that produced the checked-in generated
       # code. Bump intentionally when refreshing generated examples.

@@ -21,9 +21,22 @@ var _ http.Header = nil
 // interface. Generated code targets the typed-response variant by default.
 var _ nonjson.ClientWithResponsesInterface = (nonjson.ClientWithResponsesInterface)(nil)
 
-// RegisterNonJSONBodiesClient registers every operation in the spec as an MCP tool.
-// Each tool delegates to the supplied oapi-codegen client.
+// RegisterNonJSONBodiesClient registers every operation in the spec with the standard
+// MCP-compatible input schema. Each tool delegates to the supplied oapi-codegen client.
 func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterNonJSONBodiesClientWithProvider(s, c, runtime.LLMProviderStandard, opts...)
+}
+
+// RegisterNonJSONBodiesClientOpenAI registers every operation with OpenAI-compatible
+// input schemas.
+func RegisterNonJSONBodiesClientOpenAI(s runtime.MCPServer, c nonjson.ClientWithResponsesInterface, opts ...runtime.Option) {
+	RegisterNonJSONBodiesClientWithProvider(s, c, runtime.LLMProviderOpenAI, opts...)
+}
+
+// RegisterNonJSONBodiesClientWithProvider registers every operation using the schema
+// dialect selected by provider. Unknown providers use the standard schema.
+func RegisterNonJSONBodiesClientWithProvider(s runtime.MCPServer, c nonjson.ClientWithResponsesInterface, provider runtime.LLMProvider, opts ...runtime.Option) {
+
 	cfg := runtime.NewConfig()
 	for _, o := range opts {
 		o(cfg)
@@ -32,11 +45,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /avatars
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "uploadAvatar",
-			Description:     "Upload an avatar image with an encoding contentType override.",
-			RawInputSchema:  json.RawMessage(input_uploadAvatar),
-			RawOutputSchema: json.RawMessage(output_uploadAvatar),
-			Annotations:     &runtime.ToolAnnotations{Title: "Upload an avatar image with an encoding contentType override."},
+			Name:              "uploadAvatar",
+			Description:       "Upload an avatar image with an encoding contentType override.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_uploadAvatar, input_openai_uploadAvatar),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_uploadAvatar),
+			Annotations:       &runtime.ToolAnnotations{Title: "Upload an avatar image with an encoding contentType override."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -51,7 +65,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.UploadAvatarWithBodyWithResponse(ctx, contentType, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -68,10 +82,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /blobs
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "uploadBlob",
-			Description:    "Upload a raw binary blob.",
-			RawInputSchema: json.RawMessage(input_uploadBlob),
-			Annotations:    &runtime.ToolAnnotations{Title: "Upload a raw binary blob."},
+			Name:              "uploadBlob",
+			Description:       "Upload a raw binary blob.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_uploadBlob, input_openai_uploadBlob),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Upload a raw binary blob."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -86,7 +101,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.UploadBlobWithBodyWithResponse(ctx, "application/octet-stream", body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -103,10 +118,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// GET /blobs/{id}
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "downloadBlob",
-			Description:    "Download a previously-uploaded blob.",
-			RawInputSchema: json.RawMessage(input_downloadBlob),
-			Annotations:    &runtime.ToolAnnotations{Title: "Download a previously-uploaded blob.", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "downloadBlob",
+			Description:       "Download a previously-uploaded blob.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_downloadBlob, input_openai_downloadBlob),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Download a previously-uploaded blob.", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -121,7 +137,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.DownloadBlobWithResponse(ctx, id)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -138,11 +154,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /files/upload
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "uploadFile",
-			Description:     "Upload a file with metadata via multipart form-data.",
-			RawInputSchema:  json.RawMessage(input_uploadFile),
-			RawOutputSchema: json.RawMessage(output_uploadFile),
-			Annotations:     &runtime.ToolAnnotations{Title: "Upload a file with metadata via multipart form-data."},
+			Name:              "uploadFile",
+			Description:       "Upload a file with metadata via multipart form-data.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_uploadFile, input_openai_uploadFile),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_uploadFile),
+			Annotations:       &runtime.ToolAnnotations{Title: "Upload a file with metadata via multipart form-data."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -157,7 +174,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.UploadFileWithBodyWithResponse(ctx, contentType, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -174,11 +191,12 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /forms/login
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:            "submitLogin",
-			Description:     "Submit a form-urlencoded login.",
-			RawInputSchema:  json.RawMessage(input_submitLogin),
-			RawOutputSchema: json.RawMessage(output_submitLogin),
-			Annotations:     &runtime.ToolAnnotations{Title: "Submit a form-urlencoded login."},
+			Name:              "submitLogin",
+			Description:       "Submit a form-urlencoded login.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_submitLogin, input_openai_submitLogin),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_submitLogin),
+			Annotations:       &runtime.ToolAnnotations{Title: "Submit a form-urlencoded login."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -193,7 +211,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.SubmitLoginWithFormdataBodyWithResponse(ctx, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -210,10 +228,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /notes
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "postNote",
-			Description:    "Post a plain-text note.",
-			RawInputSchema: json.RawMessage(input_postNote),
-			Annotations:    &runtime.ToolAnnotations{Title: "Post a plain-text note."},
+			Name:              "postNote",
+			Description:       "Post a plain-text note.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_postNote, input_openai_postNote),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Post a plain-text note."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -228,7 +247,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.PostNoteWithBodyWithResponse(ctx, "text/plain", body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -245,10 +264,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /profiles
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "createProfile",
-			Description:    "Create a profile whose avatar is a nested binary field.",
-			RawInputSchema: json.RawMessage(input_createProfile),
-			Annotations:    &runtime.ToolAnnotations{Title: "Create a profile whose avatar is a nested binary field."},
+			Name:              "createProfile",
+			Description:       "Create a profile whose avatar is a nested binary field.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_createProfile, input_openai_createProfile),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Create a profile whose avatar is a nested binary field."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -263,7 +283,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.CreateProfileWithBodyWithResponse(ctx, contentType, body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -280,10 +300,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// GET /reports/latest
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "getLatestReport",
-			Description:    "Retrieve the most recent plain-text report.",
-			RawInputSchema: json.RawMessage(input_getLatestReport),
-			Annotations:    &runtime.ToolAnnotations{Title: "Retrieve the most recent plain-text report.", ReadOnlyHint: true, IdempotentHint: true},
+			Name:              "getLatestReport",
+			Description:       "Retrieve the most recent plain-text report.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getLatestReport, input_openai_getLatestReport),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Retrieve the most recent plain-text report.", ReadOnlyHint: true, IdempotentHint: true},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -294,7 +315,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.GetLatestReportWithResponse(ctx)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -311,10 +332,11 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 	// POST /xml-import
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
-			Name:           "importXML",
-			Description:    "Import an XML document.",
-			RawInputSchema: json.RawMessage(input_importXML),
-			Annotations:    &runtime.ToolAnnotations{Title: "Import an XML document."},
+			Name:              "importXML",
+			Description:       "Import an XML document.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_importXML, input_openai_importXML),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{Title: "Import an XML document."},
 		}, cfg),
 		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
@@ -329,7 +351,7 @@ func RegisterNonJSONBodiesClient(s runtime.MCPServer, c nonjson.ClientWithRespon
 			}
 			resp, err := c.ImportXMLWithBodyWithResponse(ctx, "application/xml", body)
 			if err != nil {
-				return runtime.HandleError(err)
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 			}
 			if resp == nil {
 				return runtime.NewToolResultError("empty response"), nil
@@ -356,6 +378,15 @@ func headerOf(r *http.Response) http.Header {
 	return r.Header
 }
 
+// inputSchemaForProvider returns OpenAI's strict schema only for the OpenAI
+// provider; all other values deliberately retain the standard MCP schema.
+func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI string) json.RawMessage {
+	if provider == runtime.LLMProviderOpenAI {
+		return json.RawMessage(openAI)
+	}
+	return json.RawMessage(standard)
+}
+
 const input_uploadAvatar = `{
   "properties": {
     "body": {
@@ -370,6 +401,37 @@ const input_uploadAvatar = `{
         }
       },
       "required": [
+        "image"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_uploadAvatar = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "contentEncoding": "base64",
+          "description": "PNG bytes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alt_text",
         "image"
       ],
       "type": "object"
@@ -405,9 +467,46 @@ const input_uploadBlob = `{
   "type": "object"
 }`
 
+const input_openai_uploadBlob = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "contentEncoding": "base64",
+      "description": "request body (application/octet-stream), base64-encoded",
+      "type": "string"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
 const input_downloadBlob = `{
   "properties": {
     "path": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_downloadBlob = `{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string"
@@ -440,6 +539,37 @@ const input_uploadFile = `{
       },
       "required": [
         "attachment"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_uploadFile = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "attachment": {
+          "contentEncoding": "base64",
+          "description": "The binary blob to upload.",
+          "type": "string"
+        },
+        "caption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "attachment",
+        "caption"
       ],
       "type": "object"
     }
@@ -487,6 +617,39 @@ const input_submitLogin = `{
   "type": "object"
 }`
 
+const input_openai_submitLogin = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "password": {
+          "type": "string"
+        },
+        "remember_me": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "password",
+        "remember_me",
+        "username"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
 const output_submitLogin = `{
   "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
   "properties": {
@@ -498,6 +661,20 @@ const output_submitLogin = `{
 }`
 
 const input_postNote = `{
+  "properties": {
+    "body": {
+      "description": "request body (text/plain)",
+      "type": "string"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_postNote = `{
+  "additionalProperties": false,
   "properties": {
     "body": {
       "description": "request body (text/plain)",
@@ -543,12 +720,73 @@ const input_createProfile = `{
   "type": "object"
 }`
 
+const input_openai_createProfile = `{
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "additionalProperties": false,
+      "properties": {
+        "user": {
+          "additionalProperties": false,
+          "properties": {
+            "avatar": {
+              "contentEncoding": "base64",
+              "description": "base64-encoded binary",
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "avatar",
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "user"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
 const input_getLatestReport = `{
   "properties": {},
   "type": "object"
 }`
 
+const input_openai_getLatestReport = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "type": "object"
+}`
+
 const input_importXML = `{
+  "properties": {
+    "body": {
+      "description": "request body (application/xml)",
+      "type": "string"
+    }
+  },
+  "required": [
+    "body"
+  ],
+  "type": "object"
+}`
+
+const input_openai_importXML = `{
+  "additionalProperties": false,
   "properties": {
     "body": {
       "description": "request body (application/xml)",

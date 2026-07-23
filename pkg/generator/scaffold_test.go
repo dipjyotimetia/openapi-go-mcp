@@ -164,7 +164,7 @@ func TestWriteScaffold_GoMod_ShapeAndOrder(t *testing.T) {
 	// module + go directives present.
 	for _, want := range []string{
 		"module example.com/petmcp",
-		"go 1.23",
+		"go 1.26",
 		"require (",
 		"github.com/dipjyotimetia/openapi-go-mcp v1.2.3",
 		"github.com/modelcontextprotocol/go-sdk",
@@ -178,6 +178,26 @@ func TestWriteScaffold_GoMod_ShapeAndOrder(t *testing.T) {
 	m := strings.Index(src, "modelcontextprotocol")
 	if d < 0 || m < 0 || d > m {
 		t.Errorf("require block must be sorted (dipjyotimetia before modelcontextprotocol); got\n%s", src)
+	}
+}
+
+func TestGenerate_ProxyPreflightsScaffoldCollisions(t *testing.T) {
+	out := t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "main.go"), []byte("// user-owned"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := mustLoad(t, `openapi: 3.0.0
+info: {title: Atomic, version: "1"}
+paths:
+  /things:
+    get: {operationId: listThings, responses: {"200": {description: ok}}}
+`)
+	_, err := Generate(doc, Options{Mode: ModeProxy, OutDir: out, PackageName: "atomicmcp", ModulePath: "example.com/atomic"})
+	if err == nil {
+		t.Fatal("Generate succeeded despite user-owned main.go")
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "atomicmcp", "atomicmcp.mcp.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("proxy generation left partial MCP output: %v", statErr)
 	}
 }
 

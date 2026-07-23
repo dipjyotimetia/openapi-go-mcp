@@ -49,7 +49,8 @@ go install github.com/dipjyotimetia/openapi-go-mcp/cmd/openapi-go-mcp@latest
 go install github.com/dipjyotimetia/openapi-go-mcp/cmd/openapi-go-mcp@v0.1.0
 ```
 
-Verify with `openapi-go-mcp -version`. Generated code targets Go 1.23+.
+Verify with `openapi-go-mcp -version`. Generated companion and proxy code
+requires Go 1.26+, matching the runtime module it imports.
 
 ## Quick start
 
