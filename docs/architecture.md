@@ -121,9 +121,9 @@ LLM client ──tools/call──▶│  MCP transport     │
 ┌────────────────────────────┐         ┌─────────────────────────────────┐
 │ generated handler closure  │         │ generated handler closure       │
 │  decode args via runtime.* │         │  decode args via                │
-│    DecodePathParam,        │         │    runtime.DecodeProxyParam     │
-│    DecodeBody,             │         │    (stringifies path/query/     │
-│    DecodeParamsCombined    │         │     header/cookie for the wire) │
+│    DecodePathParam,        │         │    runtime.SerializeProxyParam  │
+│    DecodeBody,             │         │    (OpenAPI style/explode for   │
+│    DecodeParamsCombined    │         │     path/query/header/cookie)   │
 │                            │         │                                 │
 │  call typed oapi-codegen   │         │  build *http.Request directly   │
 │    client method:          │         │    runtime.BuildProxyURL        │

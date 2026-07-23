@@ -14,7 +14,7 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 - **Reviewable diffs.** The output is gofmt-clean Go source, version-controlled. PR reviewers see exactly what the MCP server will expose — no runtime surprises.
 - **No reflection / no schema-walking at request time.** Cold-start cost is zero; tool registration is straight-line code.
 
-**Cost.** Spec changes require a regeneration step. A runtime registration path is on the roadmap (`TODO.md`) but is not the default for the reasons above.
+**Cost.** Spec changes require a regeneration step. Startup-only dynamic registration is also available through `pkg/dynamic`, but code generation remains the default when typed-client compile-time safety and reviewable output matter.
 
 ## 2. `runtime.MCPServer` interface, not vendor lock-in
 

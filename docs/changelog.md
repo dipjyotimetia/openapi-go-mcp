@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Parameter-object metadata in input schemas** — `description`, `example`, and `deprecated` declared on the Parameter object (not its schema) are now merged into the tool input schema; the schema's own keywords win on collision. Previously this metadata was silently dropped.
 - **Deprecated operations surfaced** — `deprecated: true` on an operation now prefixes the tool description with `Deprecated.` (MCP has no native flag).
 - **Webhook / link / nested-multipart-encoding diagnostics are now emitted** — the codes `dropped-webhook` (OpenAPI 3.1 top-level `webhooks`, including webhooks-only documents), `dropped-link` (response `links`, named per `<status>.<link>`), and `nested-multipart-encoding` (encoding metadata keyed by a nested binary field's name, which OpenAPI cannot address) existed but never fired; these spec features were dropped with no trace. All three are warnings and therefore visible to `-warnings-as-errors` pipelines.
-- **`TODO.md` roadmap** — the file referenced by the architecture doc, design decisions, and CI comments now actually exists.
+- **Roadmap tracking** — the release introduced an explicit roadmap for gaps that were intentionally deferred at that point.
 - **E2E coverage for `-openai-compat`** — `tests/e2e/cli_test.go` drives the real binary against the composition-heavy complex-schemas fixture and asserts the strict-dialect invariants (no `$ref`/`oneOf`/`anyOf`/`allOf`/`$defs`, `additionalProperties:false` forced). The generator-level invariants test also gained the recursive fixture.
 
 ### Fixed — MCP gap review
@@ -175,7 +175,7 @@ Initial public release.
 - Multipart `encoding[field]` metadata (per-part content-type, custom headers, style) is ignored — every file part is sent as `application/octet-stream`. *(Per-part content-type shipped in v0.1.1 for top-level fields; custom headers/style remain unsupported.)*
 - A spec header parameter named `Content-Type` is silently overridden by oapi-codegen's `<Op>WithBodyWithResponse` for non-JSON request bodies. *(A generator warning for this shipped in v0.1.1.)*
 - Streaming responses (SSE, chunked) surface as raw bytes; no first-class streaming support yet.
-- No dynamic (no-codegen, reflection-based) registration path yet. Tracked in `TODO.md`.
+- No dynamic (no-codegen, reflection-based) registration path yet. *(Superseded by the startup-only `pkg/dynamic` path.)*
 - `discriminator` is dropped during schema conversion — JSON Schema has no direct equivalent. *(Surfaced as a description hint since v0.1.1.)*
 
 [Unreleased]: https://github.com/dipjyotimetia/openapi-go-mcp/compare/v0.1.1...HEAD

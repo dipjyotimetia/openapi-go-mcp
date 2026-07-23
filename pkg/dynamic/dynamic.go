@@ -90,6 +90,9 @@ func Register(ctx context.Context, server runtime.MCPServer, source string, cfg 
 	if err != nil {
 		return fmt.Errorf("collect OpenAPI operations: %w", err)
 	}
+	if isRemote && hasClientCredentialsFlow(ops) {
+		return fmt.Errorf("remote OpenAPI sources may not declare OAuth client-credentials token URLs; use a trusted local spec, a pre-acquired access token, or a custom request auth provider")
+	}
 	baseURL, serverVariables, err := resolveBaseURL(doc, cfg, isRemote)
 	if err != nil {
 		return err
@@ -497,6 +500,9 @@ func applyScheme(ctx context.Context, req *http.Request, scheme generator.Securi
 		if !mtlsConfigured {
 			return fmt.Errorf("mTLS client is not configured for security scheme %s", scheme.Name)
 		}
+		if req.URL == nil || req.URL.Scheme != "https" {
+			return fmt.Errorf("mTLS security scheme %s requires an HTTPS upstream URL", scheme.Name)
+		}
 		return nil
 	default:
 		return fmt.Errorf("unsupported security scheme %q", scheme.Name)
@@ -508,6 +514,7 @@ type oauthCredentialState struct {
 	provider     *runtime.ClientCredentialsProvider
 	clientID     string
 	clientSecret string
+	scopes       string
 }
 
 func newOAuthCredentialStates(alternatives [][]generator.SecurityScheme) map[string]*oauthCredentialState {
@@ -529,9 +536,10 @@ func (state *oauthCredentialState) apply(ctx context.Context, req *http.Request,
 		return &runtime.MissingCredentialError{SchemeName: scheme.Name, EnvVar: scheme.ClientIDEnvVar + "/" + scheme.ClientSecretEnvVar}
 	}
 	state.Lock()
-	if state.provider == nil || state.clientID != clientID || state.clientSecret != clientSecret {
+	scopeKey := strings.Join(scheme.OAuthRequestScopes, " ")
+	if state.provider == nil || state.clientID != clientID || state.clientSecret != clientSecret || state.scopes != scopeKey {
 		provider, err := runtime.NewClientCredentialsProvider(runtime.ClientCredentialsConfig{
-			TokenURL: scheme.OAuthTokenURL, ClientID: clientID, ClientSecret: clientSecret, Scopes: scheme.OAuthScopes,
+			TokenURL: scheme.OAuthTokenURL, ClientID: clientID, ClientSecret: clientSecret, Scopes: scheme.OAuthRequestScopes,
 		})
 		if err != nil {
 			state.Unlock()
@@ -540,10 +548,24 @@ func (state *oauthCredentialState) apply(ctx context.Context, req *http.Request,
 		state.provider = provider
 		state.clientID = clientID
 		state.clientSecret = clientSecret
+		state.scopes = scopeKey
 	}
 	provider := state.provider
 	state.Unlock()
 	return provider.Apply(ctx, req)
+}
+
+func hasClientCredentialsFlow(ops []generator.Operation) bool {
+	for _, op := range ops {
+		for _, alternative := range op.Security {
+			for _, scheme := range alternative {
+				if scheme.Kind == generator.SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func requiredEnvVars(alternatives [][]generator.SecurityScheme) []string {

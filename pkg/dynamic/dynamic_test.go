@@ -294,6 +294,17 @@ paths:
 	if called {
 		t.Fatal("unasserted mTLS client made an upstream request")
 	}
+	configured := &fakeServer{}
+	if err := dynamic.Register(context.Background(), configured, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client(), MTLSConfigured: true}); err != nil {
+		t.Fatalf("Register() with asserted mTLS client: %v", err)
+	}
+	result, err = configured.handlers["readSecure"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
+	if err != nil || !result.IsError || !strings.Contains(result.Text, "requires an HTTPS upstream URL") {
+		t.Fatalf("HTTP upstream result = %#v, %v", result, err)
+	}
+	if called {
+		t.Fatal("mTLS security permitted an HTTP upstream request")
+	}
 }
 
 func TestRegister_BoundsUpstreamResponse(t *testing.T) {
@@ -326,6 +337,34 @@ paths:
 	result, err := server.handlers["getLarge"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
 	if err != nil || !result.IsError || !strings.Contains(result.Text, `"code":"response_too_large"`) {
 		t.Fatalf("handler result = %#v, %v", result, err)
+	}
+}
+
+func TestRegister_RejectsRemoteClientCredentialsTokenURL(t *testing.T) {
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `openapi: 3.1.0
+info: { title: Remote OAuth, version: 1.0.0 }
+components:
+  securitySchemes:
+    oauth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://untrusted.example/token
+          scopes: { read: Read }
+paths:
+  /secure:
+    get:
+      operationId: readSecure
+      security: [ { oauth: [read] } ]
+      responses: { "204": { description: ok } }
+`)
+	}))
+	defer source.Close()
+	if err := dynamic.Register(context.Background(), &fakeServer{}, source.URL, dynamic.Config{
+		SourceHTTPClient: source.Client(), BaseURL: "https://api.example.com",
+	}); err == nil || !strings.Contains(err.Error(), "remote OpenAPI sources may not declare OAuth client-credentials") {
+		t.Fatalf("Register() error = %v", err)
 	}
 }
 

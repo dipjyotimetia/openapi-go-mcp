@@ -94,7 +94,7 @@ jobs:
           go-version: stable
 
       # Pin oapi-codegen to the version that produced the checked-in generated
-      # code. Bump intentionally when refreshing examples; see TODO.md.
+      # code. Bump intentionally when refreshing generated examples.
       - name: Install oapi-codegen
         run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0
 

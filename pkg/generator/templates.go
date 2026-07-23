@@ -435,7 +435,7 @@ func hasAuth{{pascalCase .Name}}(cfg *runtime.Config) bool {
 
 // applyAuth{{pascalCase .Name}} attaches credentials for the {{quote .Name}}
 // security scheme to req, reading them from the environment.
-func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *runtime.Config) error {
+func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *runtime.Config{{if eq (printf "%s" .Kind) "oauth2"}}, requestedScopes []string{{end}}) error {
 {{- if eq (printf "%s" .Kind) "apiKey"}}
 	v := os.Getenv({{quote .EnvVar}})
 	if v == "" {
@@ -454,7 +454,7 @@ func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *
 		return runtime.ApplyBearer(req, v)
 	}
 {{- if .OAuthTokenURL}}
-	return applyOAuthClientCredentials{{pascalCase .Name}}(ctx, req)
+	return applyOAuthClientCredentials{{pascalCase .Name}}(ctx, req, requestedScopes)
 {{- else}}
 	return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .EnvVar}}}
 {{- end}}
@@ -471,6 +471,9 @@ func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *
 	if !cfg.MTLSConfigured {
 		return fmt.Errorf("mTLS client is not configured for security scheme %s", {{quote .Name}})
 	}
+	if req.URL == nil || req.URL.Scheme != "https" {
+		return fmt.Errorf("mTLS security scheme %s requires an HTTPS upstream URL", {{quote .Name}})
+	}
 	return nil
 {{- end}}
 }
@@ -481,17 +484,19 @@ var oauthClientCredentials{{pascalCase .Name}} struct {
 	provider *runtime.ClientCredentialsProvider
 	clientID string
 	clientSecret string
+	scopes       string
 }
 
-func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *http.Request) error {
+func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *http.Request, requestedScopes []string) error {
 	clientID := os.Getenv({{quote .ClientIDEnvVar}})
 	clientSecret := os.Getenv({{quote .ClientSecretEnvVar}})
 	if clientID == "" || clientSecret == "" {
 		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .ClientIDEnvVar}} + "/" + {{quote .ClientSecretEnvVar}}}
 	}
 	oauthClientCredentials{{pascalCase .Name}}.Lock()
-	if oauthClientCredentials{{pascalCase .Name}}.provider == nil || oauthClientCredentials{{pascalCase .Name}}.clientID != clientID || oauthClientCredentials{{pascalCase .Name}}.clientSecret != clientSecret {
-		provider, err := runtime.NewClientCredentialsProvider(runtime.ClientCredentialsConfig{TokenURL: {{quote .OAuthTokenURL}}, ClientID: clientID, ClientSecret: clientSecret, Scopes: []string{ {{range $index, $scope := .OAuthScopes}}{{if $index}}, {{end}}{{quote $scope}}{{end}} }})
+	scopeKey := strings.Join(requestedScopes, " ")
+	if oauthClientCredentials{{pascalCase .Name}}.provider == nil || oauthClientCredentials{{pascalCase .Name}}.clientID != clientID || oauthClientCredentials{{pascalCase .Name}}.clientSecret != clientSecret || oauthClientCredentials{{pascalCase .Name}}.scopes != scopeKey {
+		provider, err := runtime.NewClientCredentialsProvider(runtime.ClientCredentialsConfig{TokenURL: {{quote .OAuthTokenURL}}, ClientID: clientID, ClientSecret: clientSecret, Scopes: requestedScopes})
 		if err != nil {
 			oauthClientCredentials{{pascalCase .Name}}.Unlock()
 			return err
@@ -499,6 +504,7 @@ func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *h
 		oauthClientCredentials{{pascalCase .Name}}.provider = provider
 		oauthClientCredentials{{pascalCase .Name}}.clientID = clientID
 		oauthClientCredentials{{pascalCase .Name}}.clientSecret = clientSecret
+		oauthClientCredentials{{pascalCase .Name}}.scopes = scopeKey
 	}
 	provider := oauthClientCredentials{{pascalCase .Name}}.provider
 	oauthClientCredentials{{pascalCase .Name}}.Unlock()
@@ -514,7 +520,7 @@ func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *h
 func applyAuthFor{{.GoName}}(ctx context.Context, req *http.Request, cfg *runtime.Config) error {
 {{range .Security}}
 	if {{range $index, $scheme := .}}{{if $index}} && {{end}}hasAuth{{pascalCase $scheme.Name}}(cfg){{end}} {
-		{{range .}}if err := applyAuth{{pascalCase .Name}}(ctx, req, cfg); err != nil {
+		{{range .}}if err := applyAuth{{pascalCase .Name}}(ctx, req, cfg{{if eq (printf "%s" .Kind) "oauth2"}}, {{oauthScopesLit .OAuthRequestScopes}}{{end}}); err != nil {
 			return err
 		}
 		{{end}}return nil
@@ -565,7 +571,21 @@ func templateFuncs() template.FuncMap {
 		// "api-key" → "ApiKey".
 		"pascalCase":         PascalCase,
 		"securityEnvVarsLit": securityEnvVarsLit,
+		"oauthScopesLit":     oauthScopesLit,
 	}
+}
+
+func oauthScopesLit(scopes []string) string {
+	if len(scopes) == 0 {
+		return "nil"
+	}
+	values := append([]string(nil), scopes...)
+	sort.Strings(values)
+	parts := make([]string, 0, len(values))
+	for _, scope := range values {
+		parts = append(parts, strconv.Quote(scope))
+	}
+	return "[]string{" + strings.Join(parts, ", ") + "}"
 }
 
 // securityEnvVarsLit renders the stable, deduplicated environment-variable

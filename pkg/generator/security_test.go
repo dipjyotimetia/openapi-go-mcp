@@ -191,6 +191,19 @@ func TestParseSecuritySchemes_MTLSSupported(t *testing.T) {
 	}
 }
 
+func TestResolveSecurityPolicy_UsesOnlyOperationOAuthScopes(t *testing.T) {
+	reqs := openapi3.SecurityRequirements{{"oauth": []string{"write"}}}
+	policy := ResolveSecurityPolicy(&openapi3.Operation{Security: &reqs}, &openapi3.T{}, []SecurityScheme{{
+		Name: "oauth", Kind: SecurityOAuth2, OAuthTokenURL: "https://issuer.example/token", OAuthScopes: []string{"read", "write"},
+	}})
+	if len(policy.Alternatives) != 1 || len(policy.Alternatives[0]) != 1 {
+		t.Fatalf("policy = %+v", policy)
+	}
+	if got := policy.Alternatives[0][0].OAuthRequestScopes; !reflect.DeepEqual(got, []string{"write"}) {
+		t.Errorf("request scopes = %v, want [write]", got)
+	}
+}
+
 func TestParseSecuritySchemes_OpenIDConnectUsesCustomProvider(t *testing.T) {
 	doc := docWithSchemes(openapi3.SecuritySchemes{
 		"oidc": schemeRef(&openapi3.SecurityScheme{Type: "openIdConnect"}),

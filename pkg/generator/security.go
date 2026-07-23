@@ -73,7 +73,11 @@ type SecurityScheme struct {
 	ClientIDEnvVar     string
 	ClientSecretEnvVar string
 	OAuthTokenURL      string
+	// OAuthScopes contains the scopes advertised by the client-credentials
+	// flow. OAuthRequestScopes is the operation-specific subset selected by
+	// its OpenAPI Security Requirement.
 	OAuthScopes        []string
+	OAuthRequestScopes []string
 }
 
 // ParseSecuritySchemes walks doc.Components.SecuritySchemes and returns a
@@ -294,6 +298,10 @@ func ResolveSecurityPolicy(op *openapi3.Operation, doc *openapi3.T, parsed []Sec
 			if !ok {
 				complete = false
 				break
+			}
+			if s.Kind == SecurityOAuth2 && s.OAuthTokenURL != "" {
+				s.OAuthRequestScopes = append([]string(nil), req[n]...)
+				sort.Strings(s.OAuthRequestScopes)
 			}
 			picked = append(picked, s)
 		}

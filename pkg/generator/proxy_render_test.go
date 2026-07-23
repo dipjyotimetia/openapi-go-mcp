@@ -174,7 +174,7 @@ func TestRender_ProxyMode_OAuthClientCredentialsAndMTLS(t *testing.T) {
 	spec := []byte(`openapi: 3.1.0
 info: { title: Secure, version: "1.0" }
 servers: [ { url: https://api.test } ]
-security: [ { oauth: [] }, { mtls: [] } ]
+security: [ { oauth: [read] }, { mtls: [] } ]
 components:
   securitySchemes:
     oauth:
@@ -208,7 +208,7 @@ paths:
 		"OAUTH2_CLIENT_SECRET_OAUTH",
 		"runtime.NewClientCredentialsProvider",
 		`TokenURL: "https://issuer.test/token"`,
-		`Scopes: []string{"read", "write"}`,
+		`applyAuthOauth(ctx, req, cfg, []string{"read"})`,
 		"mTLS client is not configured for security scheme %s",
 		"hasAuthMtls(cfg)",
 	} {
