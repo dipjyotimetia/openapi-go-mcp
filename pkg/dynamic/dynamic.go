@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -53,10 +54,16 @@ type Config struct {
 	BaseURL            string
 	NamePrefix         string
 	RequestTimeout     time.Duration
-	ServerVariables    map[string]string
+	// MaxResponseBytes limits upstream response buffering. Zero uses the
+	// runtime default, which is bounded for production safety.
+	MaxResponseBytes int64
+	ServerVariables  map[string]string
 	// Provider selects the input-schema dialect advertised to the MCP client.
 	// The zero value selects the standard MCP-compatible schema.
 	Provider runtime.LLMProvider
+	// RequestAuthProvider supplies deployment-specific OIDC/SigV4-style
+	// request signing for operations that declare custom security schemes.
+	RequestAuthProvider runtime.RequestAuthProvider
 }
 
 // Register loads source, collects the proxy-mode operations, and registers
@@ -83,13 +90,14 @@ func Register(ctx context.Context, server runtime.MCPServer, source string, cfg 
 	if err != nil {
 		return err
 	}
+	mtlsConfigured := cfg.UpstreamHTTPClient != nil
 	client := cfg.UpstreamHTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
 	toolConfig := &runtime.Config{NamePrefix: cfg.NamePrefix}
 	for _, op := range ops {
-		registerOperation(server, op, baseURL, serverVariables, client, cfg.RequestTimeout, toolConfig, cfg.Provider)
+		registerOperation(server, op, baseURL, serverVariables, client, cfg.RequestTimeout, cfg.MaxResponseBytes, toolConfig, cfg.Provider, cfg.RequestAuthProvider, mtlsConfigured)
 	}
 	return nil
 }
@@ -267,7 +275,7 @@ func validateBaseURL(baseURL string, vars map[string]string) (string, map[string
 	return baseURL, vars, nil
 }
 
-func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL string, serverVariables map[string]string, client *http.Client, timeout time.Duration, toolConfig *runtime.Config, provider runtime.LLMProvider) {
+func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL string, serverVariables map[string]string, client *http.Client, timeout time.Duration, maxResponseBytes int64, toolConfig *runtime.Config, provider runtime.LLMProvider, authProvider runtime.RequestAuthProvider, mtlsConfigured bool) {
 	tool := runtime.ApplyConfig(runtime.Tool{
 		Name:            op.ToolName,
 		Description:     op.Description,
@@ -276,6 +284,7 @@ func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL
 		Annotations:     op.Annotations,
 	}, toolConfig)
 	validator := runtime.CompileInputValidator(tool.RawInputSchema)
+	oauthStates := newOAuthCredentialStates(op.Security)
 	server.AddTool(tool, func(ctx context.Context, call *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 		if call == nil {
 			return runtime.HandleError(&runtime.ToolError{Status: http.StatusBadRequest, Code: "invalid_arguments", Message: "tool call is nil"})
@@ -292,14 +301,14 @@ func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL
 		if err != nil {
 			return runtime.HandleError(err)
 		}
-		if err := applySecurity(httpReq, op); err != nil {
+		if err := applySecurity(ctx, httpReq, op, authProvider, mtlsConfigured, oauthStates); err != nil {
 			return runtime.HandleError(err)
 		}
 		response, err := client.Do(httpReq)
 		if err != nil {
 			return runtime.HandleError(err)
 		}
-		body, err := runtime.ReadResponseBody(response)
+		body, err := runtime.ReadResponseBodyLimit(response, maxResponseBytes)
 		if err != nil {
 			return runtime.HandleError(err)
 		}
@@ -317,20 +326,24 @@ func inputSchemaForProvider(provider runtime.LLMProvider, standard, openAI strin
 func buildRequest(ctx context.Context, op generator.Operation, baseURL string, serverVariables map[string]string, args map[string]any) (*http.Request, error) {
 	path := op.Path
 	for _, param := range op.PathParams {
-		value, _, err := runtime.DecodeProxyParam(args, "path", param.Name, true)
+		serialized, _, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
+			Name: param.Name, In: "path", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+		}, true)
 		if err != nil {
 			return nil, err
 		}
-		path = strings.ReplaceAll(path, "{"+param.Name+"}", runtime.PathEscape(value))
+		path = strings.ReplaceAll(path, "{"+param.Name+"}", serialized.Value)
 	}
-	query := url.Values{}
+	query := runtime.ProxyQuery{}
 	for _, param := range op.QueryParams {
-		value, present, err := runtime.DecodeProxyParam(args, "query", param.Name, param.Required)
+		serialized, present, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
+			Name: param.Name, In: "query", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+		}, param.Required)
 		if err != nil {
 			return nil, err
 		}
 		if present {
-			query.Set(param.Name, value)
+			query = append(query, serialized.Query...)
 		}
 	}
 	resolvedBaseURL, err := runtime.SubstituteServerVariables(baseURL, serverVariables)
@@ -353,21 +366,27 @@ func buildRequest(ctx context.Context, op generator.Operation, baseURL string, s
 		req.Header.Set("Content-Type", contentType)
 	}
 	for _, param := range op.HeaderParams {
-		value, present, err := runtime.DecodeProxyParam(args, "header", param.Name, param.Required)
+		serialized, present, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
+			Name: param.Name, In: "header", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+		}, param.Required)
 		if err != nil {
 			return nil, err
 		}
 		if present {
-			req.Header.Set(param.Name, value)
+			req.Header.Set(param.Name, serialized.Value)
 		}
 	}
 	for _, param := range op.CookieParams {
-		value, present, err := runtime.DecodeProxyParam(args, "cookie", param.Name, param.Required)
+		serialized, present, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
+			Name: param.Name, In: "cookie", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+		}, param.Required)
 		if err != nil {
 			return nil, err
 		}
 		if present {
-			req.AddCookie(&http.Cookie{Name: param.Name, Value: value}) // #nosec G124
+			for _, cookie := range serialized.Cookies {
+				req.AddCookie(&http.Cookie{Name: cookie.Name, Value: cookie.Value}) // #nosec G124
+			}
 		}
 	}
 	return req, nil
@@ -400,16 +419,16 @@ func requestBody(op generator.Operation, args map[string]any) (io.Reader, string
 	}
 }
 
-func applySecurity(req *http.Request, op generator.Operation) error {
+func applySecurity(ctx context.Context, req *http.Request, op generator.Operation, provider runtime.RequestAuthProvider, mtlsConfigured bool, oauthStates map[string]*oauthCredentialState) error {
 	if !op.AuthRequired {
 		return nil
 	}
 	for _, alternative := range op.Security {
-		if !securityAvailable(alternative) {
+		if !securityAvailable(alternative, provider, mtlsConfigured) {
 			continue
 		}
 		for _, scheme := range alternative {
-			if err := applyScheme(req, scheme); err != nil {
+			if err := applyScheme(ctx, req, scheme, provider, mtlsConfigured, oauthStates); err != nil {
 				return err
 			}
 		}
@@ -418,10 +437,28 @@ func applySecurity(req *http.Request, op generator.Operation) error {
 	return &runtime.UnsatisfiedSecurityError{Operation: op.Method + " " + op.Path, MissingEnvVars: requiredEnvVars(op.Security)}
 }
 
-func securityAvailable(schemes []generator.SecurityScheme) bool {
+func securityAvailable(schemes []generator.SecurityScheme, provider runtime.RequestAuthProvider, mtlsConfigured bool) bool {
 	for _, scheme := range schemes {
+		if scheme.Kind == generator.SecurityCustom {
+			if provider == nil {
+				return false
+			}
+			continue
+		}
+		if scheme.Kind == generator.SecurityMTLS {
+			if !mtlsConfigured {
+				return false
+			}
+			continue
+		}
 		if scheme.Kind == generator.SecurityHTTPBasic {
 			if os.Getenv(scheme.UsernameEnvVar) == "" || os.Getenv(scheme.PasswordEnvVar) == "" {
+				return false
+			}
+			continue
+		}
+		if scheme.Kind == generator.SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+			if os.Getenv(scheme.EnvVar) == "" && (os.Getenv(scheme.ClientIDEnvVar) == "" || os.Getenv(scheme.ClientSecretEnvVar) == "") {
 				return false
 			}
 			continue
@@ -433,17 +470,76 @@ func securityAvailable(schemes []generator.SecurityScheme) bool {
 	return true
 }
 
-func applyScheme(req *http.Request, scheme generator.SecurityScheme) error {
+func applyScheme(ctx context.Context, req *http.Request, scheme generator.SecurityScheme, provider runtime.RequestAuthProvider, mtlsConfigured bool, oauthStates map[string]*oauthCredentialState) error {
 	switch scheme.Kind {
 	case generator.SecurityAPIKey:
 		return runtime.ApplyAPIKey(req, runtime.AuthLocation(scheme.In), scheme.ParamName, os.Getenv(scheme.EnvVar))
-	case generator.SecurityHTTPBearer, generator.SecurityOAuth2:
+	case generator.SecurityHTTPBearer:
 		return runtime.ApplyBearer(req, os.Getenv(scheme.EnvVar))
+	case generator.SecurityOAuth2:
+		if token := os.Getenv(scheme.EnvVar); token != "" {
+			return runtime.ApplyBearer(req, token)
+		}
+		state := oauthStates[scheme.Name]
+		if state == nil {
+			return &runtime.MissingCredentialError{SchemeName: scheme.Name, EnvVar: scheme.EnvVar}
+		}
+		return state.apply(ctx, req, scheme)
 	case generator.SecurityHTTPBasic:
 		return runtime.ApplyBasic(req, os.Getenv(scheme.UsernameEnvVar), os.Getenv(scheme.PasswordEnvVar))
+	case generator.SecurityCustom:
+		return runtime.ApplyRequestAuth(ctx, req, provider)
+	case generator.SecurityMTLS:
+		if !mtlsConfigured {
+			return fmt.Errorf("mTLS client is not configured for security scheme %s", scheme.Name)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported security scheme %q", scheme.Name)
 	}
+}
+
+type oauthCredentialState struct {
+	sync.Mutex
+	provider     *runtime.ClientCredentialsProvider
+	clientID     string
+	clientSecret string
+}
+
+func newOAuthCredentialStates(alternatives [][]generator.SecurityScheme) map[string]*oauthCredentialState {
+	states := map[string]*oauthCredentialState{}
+	for _, alternative := range alternatives {
+		for _, scheme := range alternative {
+			if scheme.Kind == generator.SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+				states[scheme.Name] = &oauthCredentialState{}
+			}
+		}
+	}
+	return states
+}
+
+func (state *oauthCredentialState) apply(ctx context.Context, req *http.Request, scheme generator.SecurityScheme) error {
+	clientID := os.Getenv(scheme.ClientIDEnvVar)
+	clientSecret := os.Getenv(scheme.ClientSecretEnvVar)
+	if clientID == "" || clientSecret == "" {
+		return &runtime.MissingCredentialError{SchemeName: scheme.Name, EnvVar: scheme.ClientIDEnvVar + "/" + scheme.ClientSecretEnvVar}
+	}
+	state.Lock()
+	if state.provider == nil || state.clientID != clientID || state.clientSecret != clientSecret {
+		provider, err := runtime.NewClientCredentialsProvider(runtime.ClientCredentialsConfig{
+			TokenURL: scheme.OAuthTokenURL, ClientID: clientID, ClientSecret: clientSecret, Scopes: scheme.OAuthScopes,
+		})
+		if err != nil {
+			state.Unlock()
+			return err
+		}
+		state.provider = provider
+		state.clientID = clientID
+		state.clientSecret = clientSecret
+	}
+	provider := state.provider
+	state.Unlock()
+	return provider.Apply(ctx, req)
 }
 
 func requiredEnvVars(alternatives [][]generator.SecurityScheme) []string {
@@ -463,8 +559,14 @@ func requiredEnvVars(alternatives [][]generator.SecurityScheme) []string {
 }
 
 func schemeEnvVars(scheme generator.SecurityScheme) []string {
+	if scheme.Kind == generator.SecurityCustom {
+		return nil
+	}
 	if scheme.Kind == generator.SecurityHTTPBasic {
 		return []string{scheme.UsernameEnvVar, scheme.PasswordEnvVar}
+	}
+	if scheme.Kind == generator.SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+		return []string{scheme.EnvVar, scheme.ClientIDEnvVar, scheme.ClientSecretEnvVar}
 	}
 	return []string{scheme.EnvVar}
 }

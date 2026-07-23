@@ -386,13 +386,13 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 		f := paramFieldFromSpec(name, p, true)
 		f.GoVar = pathGoVar(f.GoVar)
 		out.PathParams = append(out.PathParams, f)
-		if p != nil {
+		if p != nil && opts.Mode == ModeProxy {
 			emitParameterStyleDiagnostic(p, opPath, sink)
 		}
 	}
-	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink)
-	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink)
-	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink)
+	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink, opts.Mode == ModeProxy)
+	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink, opts.Mode == ModeProxy)
+	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink, opts.Mode == ModeProxy)
 	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
 
 	if len(op.Callbacks) > 0 {
@@ -696,9 +696,9 @@ func collectParams(in map[string]*openapi3.Parameter) []ParamField {
 // collectParamsWithDiagnostics is collectParams plus per-parameter style/explode
 // diagnostics. Kept as a separate path so callers that don't want
 // diagnostics (tests, future tooling) can still call collectParams cheaply.
-func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath string, sink *diagSink) []ParamField {
+func collectParamsWithDiagnostics(in map[string]*openapi3.Parameter, opPath string, sink *diagSink, proxyMode bool) []ParamField {
 	out := collectParams(in)
-	if sink == nil {
+	if sink == nil || !proxyMode {
 		return out
 	}
 	// Walk in deterministic (name) order so diagnostic emission is stable.
@@ -732,11 +732,26 @@ func emitParameterStyleDiagnostic(p *openapi3.Parameter, opPath string, sink *di
 	if p == nil || sink == nil {
 		return
 	}
-	if _, ok := supportedParameterStyles[p.Style]; ok {
-		return
+	style := parameterStyle(p)
+	if _, ok := supportedParameterStyles[style]; !ok || !styleAllowedAtLocation(style, p.In) || (style == "deepObject" && !parameterExplode(p, style)) {
+		sink.warn(DiagUnsupportedParameterStyle, opPath,
+			fmt.Sprintf("parameter %q (in=%s) uses style=%q / explode=%t which proxy mode cannot serialize", p.Name, p.In, style, parameterExplode(p, style)))
 	}
-	sink.warn(DiagUnsupportedParameterStyle, opPath,
-		fmt.Sprintf("parameter %q (in=%s) uses style=%q which is not lowered by the generator; wire encoding may diverge from the spec", p.Name, p.In, p.Style))
+}
+
+func styleAllowedAtLocation(style, location string) bool {
+	switch location {
+	case inPath:
+		return style == "simple" || style == "label" || style == "matrix"
+	case inQuery:
+		return style == "form" || style == "spaceDelimited" || style == "pipeDelimited" || style == "deepObject"
+	case inHeader:
+		return style == "simple"
+	case inCookie:
+		return style == "form"
+	default:
+		return false
+	}
 }
 
 // mergeParametersWithShadowWarning concatenates pathItem-level + operation-
@@ -825,9 +840,8 @@ func parameterExplode(p *openapi3.Parameter, style string) bool {
 	if p != nil && p.Explode != nil {
 		return *p.Explode
 	}
-	// form is the sole style with an explode=true default. deepObject is
-	// defined only with explode=true; use that valid form when omitted.
-	return style == "form" || style == "deepObject"
+	// form is the sole style with an explode=true default.
+	return style == "form"
 }
 
 // pickRequestContent chooses the request content-type for an operation that

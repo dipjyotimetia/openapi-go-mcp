@@ -28,7 +28,7 @@ paths:
       parameters:
         - {name: id, in: path, required: true, style: matrix, explode: true, schema: {type: object}}
         - {name: tags, in: query, style: pipeDelimited, explode: false, allowReserved: true, schema: {type: array, items: {type: string}}}
-        - {name: filter, in: query, style: deepObject, schema: {type: object}}
+        - {name: filter, in: query, style: deepObject, explode: true, schema: {type: object}}
         - {name: X-Fields, in: header, schema: {type: object}}
         - {name: preferences, in: cookie, schema: {type: array, items: {type: string}}}
       responses: {"200": {description: ok}}

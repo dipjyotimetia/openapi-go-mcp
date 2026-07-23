@@ -106,6 +106,7 @@ func TestWithHTTPClient_AndTimeout_AndServerVars(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	WithHTTPClient(client)(cfg)
 	WithRequestTimeout(2 * time.Second)(cfg)
+	WithMaxResponseBytes(1234)(cfg)
 	WithServerVariables(map[string]string{"host": "api.example.com"})(cfg)
 	WithServerVariables(map[string]string{"version": "v2"})(cfg)
 
@@ -114,6 +115,9 @@ func TestWithHTTPClient_AndTimeout_AndServerVars(t *testing.T) {
 	}
 	if cfg.RequestTimeout != 2*time.Second {
 		t.Errorf("RequestTimeout: got %v", cfg.RequestTimeout)
+	}
+	if cfg.MaxResponseBytes != 1234 {
+		t.Errorf("MaxResponseBytes: got %d", cfg.MaxResponseBytes)
 	}
 	if cfg.ServerVariables["host"] != "api.example.com" || cfg.ServerVariables["version"] != "v2" {
 		t.Errorf("ServerVariables merged incorrectly: %v", cfg.ServerVariables)

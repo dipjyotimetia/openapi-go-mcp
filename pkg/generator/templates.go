@@ -214,21 +214,25 @@ package {{.PackageName}}
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 )
 
 // _ silences "imported and not used" when an operation set omits some helpers.
 var _ = json.RawMessage(nil)
+var _ = fmt.Errorf
 var _ context.Context = nil
 var _ http.Header = nil
 var _ io.Reader = nil
 var _ = os.Getenv
 var _ = strings.ReplaceAll
+var _ sync.Mutex
 
 {{if .ProviderAware}}// {{.RegisterFunc}} registers every operation in the spec with the standard
 // MCP-compatible input schema.
@@ -288,7 +292,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 				if err != nil {
 					return runtime.HandleError(err)
 				}
-				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", runtime.PathEscape(param.Value))
+				pathStr = strings.ReplaceAll(pathStr, "{"+"{{.Name}}"+"}", param.Value)
 			}
 			{{- end}}
 
@@ -379,13 +383,15 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 					return runtime.HandleError(err)
 				}
 				if present {
-					httpReq.AddCookie(&http.Cookie{Name: "{{.Name}}", Value: param.Value}) // #nosec G124
+					for _, cookie := range param.Cookies {
+						httpReq.AddCookie(&http.Cookie{Name: cookie.Name, Value: cookie.Value}) // #nosec G124
+					}
 				}
 			}
 			{{- end}}
 
 			{{- if .AuthRequired}}
-			if err := applyAuthFor{{.GoName}}(httpReq); err != nil {
+			if err := applyAuthFor{{.GoName}}(ctx, httpReq, cfg); err != nil {
 				return runtime.HandleError(err)
 			}
 			{{- end}}
@@ -394,7 +400,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 			if err != nil {
 				return runtime.HandleError(err)
 			}
-			respBody, err := runtime.ReadResponseBody(httpResp)
+			respBody, err := runtime.ReadResponseBodyLimit(httpResp, cfg.MaxResponseBytes)
 			if err != nil {
 				return runtime.HandleError(err)
 			}
@@ -413,9 +419,15 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 // hasAuth{{pascalCase .Name}} reports whether the environment supplies every
 // credential required for this security scheme. Policy helpers use it to
 // select an OpenAPI OR alternative without sending an unauthenticated request.
-func hasAuth{{pascalCase .Name}}() bool {
+func hasAuth{{pascalCase .Name}}(cfg *runtime.Config) bool {
 {{- if eq (printf "%s" .Kind) "httpBasic"}}
 	return os.Getenv({{quote .UsernameEnvVar}}) != "" && os.Getenv({{quote .PasswordEnvVar}}) != ""
+{{- else if eq (printf "%s" .Kind) "custom"}}
+	return cfg.RequestAuthProvider != nil
+{{- else if eq (printf "%s" .Kind) "mtls"}}
+	return cfg.HTTPClient != nil
+{{- else if and (eq (printf "%s" .Kind) "oauth2") .OAuthTokenURL}}
+	return os.Getenv({{quote .EnvVar}}) != "" || (os.Getenv({{quote .ClientIDEnvVar}}) != "" && os.Getenv({{quote .ClientSecretEnvVar}}) != "")
 {{- else}}
 	return os.Getenv({{quote .EnvVar}}) != ""
 {{- end}}
@@ -423,7 +435,7 @@ func hasAuth{{pascalCase .Name}}() bool {
 
 // applyAuth{{pascalCase .Name}} attaches credentials for the {{quote .Name}}
 // security scheme to req, reading them from the environment.
-func applyAuth{{pascalCase .Name}}(req *http.Request) error {
+func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *runtime.Config) error {
 {{- if eq (printf "%s" .Kind) "apiKey"}}
 	v := os.Getenv({{quote .EnvVar}})
 	if v == "" {
@@ -438,10 +450,14 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 	return runtime.ApplyBearer(req, v)
 {{- else if eq (printf "%s" .Kind) "oauth2"}}
 	v := os.Getenv({{quote .EnvVar}})
-	if v == "" {
-		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .EnvVar}}}
+	if v != "" {
+		return runtime.ApplyBearer(req, v)
 	}
-	return runtime.ApplyBearer(req, v)
+{{- if .OAuthTokenURL}}
+	return applyOAuthClientCredentials{{pascalCase .Name}}(ctx, req)
+{{- else}}
+	return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .EnvVar}}}
+{{- end}}
 {{- else if eq (printf "%s" .Kind) "httpBasic"}}
 	user := os.Getenv({{quote .UsernameEnvVar}})
 	pass := os.Getenv({{quote .PasswordEnvVar}})
@@ -449,18 +465,56 @@ func applyAuth{{pascalCase .Name}}(req *http.Request) error {
 		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .UsernameEnvVar}} + "/" + {{quote .PasswordEnvVar}}}
 	}
 	return runtime.ApplyBasic(req, user, pass)
+{{- else if eq (printf "%s" .Kind) "custom"}}
+	return runtime.ApplyRequestAuth(ctx, req, cfg.RequestAuthProvider)
+{{- else if eq (printf "%s" .Kind) "mtls"}}
+	if cfg.HTTPClient == nil {
+		return fmt.Errorf("mTLS client is not configured for security scheme %s", {{quote .Name}})
+	}
+	return nil
 {{- end}}
 }
+{{if and (eq (printf "%s" .Kind) "oauth2") .OAuthTokenURL}}
+
+var oauthClientCredentials{{pascalCase .Name}} struct {
+	sync.Mutex
+	provider *runtime.ClientCredentialsProvider
+	clientID string
+	clientSecret string
+}
+
+func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *http.Request) error {
+	clientID := os.Getenv({{quote .ClientIDEnvVar}})
+	clientSecret := os.Getenv({{quote .ClientSecretEnvVar}})
+	if clientID == "" || clientSecret == "" {
+		return &runtime.MissingCredentialError{SchemeName: {{quote .Name}}, EnvVar: {{quote .ClientIDEnvVar}} + "/" + {{quote .ClientSecretEnvVar}}}
+	}
+	oauthClientCredentials{{pascalCase .Name}}.Lock()
+	if oauthClientCredentials{{pascalCase .Name}}.provider == nil || oauthClientCredentials{{pascalCase .Name}}.clientID != clientID || oauthClientCredentials{{pascalCase .Name}}.clientSecret != clientSecret {
+		provider, err := runtime.NewClientCredentialsProvider(runtime.ClientCredentialsConfig{TokenURL: {{quote .OAuthTokenURL}}, ClientID: clientID, ClientSecret: clientSecret, Scopes: []string{ {{range $index, $scope := .OAuthScopes}}{{if $index}}, {{end}}{{quote $scope}}{{end}} }})
+		if err != nil {
+			oauthClientCredentials{{pascalCase .Name}}.Unlock()
+			return err
+		}
+		oauthClientCredentials{{pascalCase .Name}}.provider = provider
+		oauthClientCredentials{{pascalCase .Name}}.clientID = clientID
+		oauthClientCredentials{{pascalCase .Name}}.clientSecret = clientSecret
+	}
+	provider := oauthClientCredentials{{pascalCase .Name}}.provider
+	oauthClientCredentials{{pascalCase .Name}}.Unlock()
+	return provider.Apply(ctx, req)
+}
+{{end}}
 {{end}}
 
 {{range .Ops}}{{if .AuthRequired}}
 // applyAuthFor{{.GoName}} evaluates the OpenAPI security requirement for this
 // operation. Outer alternatives are OR; schemes within an alternative are AND.
 // If no complete alternative has credentials, no upstream request is made.
-func applyAuthFor{{.GoName}}(req *http.Request) error {
+func applyAuthFor{{.GoName}}(ctx context.Context, req *http.Request, cfg *runtime.Config) error {
 {{range .Security}}
-	if {{range $index, $scheme := .}}{{if $index}} && {{end}}hasAuth{{pascalCase $scheme.Name}}(){{end}} {
-		{{range .}}if err := applyAuth{{pascalCase .Name}}(req); err != nil {
+	if {{range $index, $scheme := .}}{{if $index}} && {{end}}hasAuth{{pascalCase $scheme.Name}}(cfg){{end}} {
+		{{range .}}if err := applyAuth{{pascalCase .Name}}(ctx, req, cfg); err != nil {
 			return err
 		}
 		{{end}}return nil
@@ -526,6 +580,10 @@ func securityEnvVarsLit(alternatives [][]SecurityScheme) string {
 				seen[scheme.UsernameEnvVar] = struct{}{}
 				seen[scheme.PasswordEnvVar] = struct{}{}
 				continue
+			}
+			if scheme.Kind == SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+				seen[scheme.ClientIDEnvVar] = struct{}{}
+				seen[scheme.ClientSecretEnvVar] = struct{}{}
 			}
 			seen[scheme.EnvVar] = struct{}{}
 		}

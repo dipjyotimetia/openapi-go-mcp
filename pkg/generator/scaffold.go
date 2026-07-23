@@ -112,7 +112,7 @@ func WriteScaffoldWithOverrides(opts Options, doc *openapi3.T, schemes []Securit
 		content []byte
 		gofmt   bool
 	}{
-		{name: "main.go", content: renderScaffoldMain(opts, doc, sdk), gofmt: true},
+		{name: "main.go", content: renderScaffoldMain(opts, doc, sdk, schemes), gofmt: true},
 		{name: "go.mod", content: []byte(renderScaffoldGoMod(opts, dep, runtimeVersion, ov.RuntimeReplace))},
 		{name: "README.md", content: []byte(renderScaffoldReadme(opts, doc, schemes, sdk))},
 	}
@@ -233,12 +233,26 @@ import (
 {{- end}}
 
 	"{{.PkgImport}}"
+	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime"
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/runtime/{{.Adapter}}"
 )
 
 func main() {
 	raw, s := {{.Adapter}}.NewServer({{quote .ServerName}}, {{quote .ServerVersion}})
-	{{.PkgName}}.{{.RegisterFunc}}(s)
+	registerOpts := []runtime.Option{}
+	{{- if .UsesMTLS}}
+	mtlsClient, err := runtime.HTTPClientWithMTLS(nil, runtime.MTLSConfig{
+		CertificateFile: os.Getenv("MTLS_CERT_FILE"),
+		KeyFile:         os.Getenv("MTLS_KEY_FILE"),
+		CAFile:          os.Getenv("MTLS_CA_FILE"),
+		ServerName:      os.Getenv("MTLS_SERVER_NAME"),
+	})
+	if err != nil {
+		log.Fatalf("configure mTLS: %v", err)
+	}
+	registerOpts = append(registerOpts, runtime.WithHTTPClient(mtlsClient))
+	{{- end}}
+	{{.PkgName}}.{{.RegisterFunc}}(s, registerOpts...)
 
 	fmt.Fprintf(os.Stderr, "%s serving over stdio\n", {{quote .ServerName}})
 {{- if eq .Adapter "gosdk"}}
@@ -257,7 +271,7 @@ func main() {
 // execution panic — the inputs are tightly constrained (opts validated
 // upstream, doc.Info nilness handled), so any failure here is a generator
 // bug we want surfaced loudly in tests.
-func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
+func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string, schemes []SecurityScheme) []byte {
 	view := struct {
 		Adapter       string
 		PkgImport     string
@@ -265,6 +279,7 @@ func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
 		RegisterFunc  string
 		ServerName    string
 		ServerVersion string
+		UsesMTLS      bool
 	}{
 		Adapter:       sdk,
 		PkgImport:     path.Join(opts.ModulePath, opts.PackageName),
@@ -272,6 +287,7 @@ func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
 		RegisterFunc:  registerFuncName(doc),
 		ServerName:    derivedServerName(opts, doc),
 		ServerVersion: derivedServerVersion(doc),
+		UsesMTLS:      usesMTLS(schemes),
 	}
 	tmpl := template.Must(template.New("main").Funcs(template.FuncMap{"quote": goQuote}).Parse(scaffoldMainTemplate))
 	var buf bytes.Buffer
@@ -279,6 +295,15 @@ func renderScaffoldMain(opts Options, doc *openapi3.T, sdk string) []byte {
 		panic(fmt.Sprintf("scaffold main template: %v", err))
 	}
 	return buf.Bytes()
+}
+
+func usesMTLS(schemes []SecurityScheme) bool {
+	for _, scheme := range schemes {
+		if scheme.Kind == SecurityMTLS {
+			return true
+		}
+	}
+	return false
 }
 
 // derivedServerName is the "name" the generated main.go advertises to MCP
@@ -328,6 +353,17 @@ func renderScaffoldReadme(opts Options, doc *openapi3.T, schemes []SecuritySchem
 			case SecurityHTTPBasic:
 				fmt.Fprintf(&b, "| `%s` | Username for HTTP Basic auth scheme `%s`. |\n", s.UsernameEnvVar, s.Name)
 				fmt.Fprintf(&b, "| `%s` | Password for HTTP Basic auth scheme `%s`. |\n", s.PasswordEnvVar, s.Name)
+			case SecurityOAuth2:
+				fmt.Fprintf(&b, "| `%s` | Pre-acquired OAuth 2 access token for scheme `%s` (optional with client credentials). |\n", s.EnvVar, s.Name)
+				if s.OAuthTokenURL != "" {
+					fmt.Fprintf(&b, "| `%s` | OAuth 2 client ID for `%s` client-credentials flow. |\n", s.ClientIDEnvVar, s.Name)
+					fmt.Fprintf(&b, "| `%s` | OAuth 2 client secret for `%s` client-credentials flow. |\n", s.ClientSecretEnvVar, s.Name)
+				}
+			case SecurityMTLS:
+				fmt.Fprintf(&b, "| `MTLS_CERT_FILE` | PEM client certificate required for mTLS scheme `%s`. |\n", s.Name)
+				fmt.Fprintf(&b, "| `MTLS_KEY_FILE` | PEM private key required for mTLS scheme `%s`. |\n", s.Name)
+				fmt.Fprintf(&b, "| `MTLS_CA_FILE` | Optional PEM CA bundle for mTLS scheme `%s`. |\n", s.Name)
+				fmt.Fprintf(&b, "| `MTLS_SERVER_NAME` | Optional TLS server name override for mTLS scheme `%s`. |\n", s.Name)
 			default:
 				fmt.Fprintf(&b, "| `%s` | Credential for security scheme `%s` (kind: %s). |\n", s.EnvVar, s.Name, s.Kind)
 			}

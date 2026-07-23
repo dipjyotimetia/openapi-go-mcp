@@ -36,11 +36,19 @@ type Config struct {
 	// handlers should apply via context.WithTimeout before delegating to the
 	// upstream oapi-codegen client. Zero means "no per-request timeout".
 	RequestTimeout time.Duration
+	// MaxResponseBytes bounds an upstream response before it is transformed
+	// into an MCP result. Zero uses DefaultMaxResponseBytes.
+	MaxResponseBytes int64
 	// ServerVariables holds substitutions for OpenAPI `servers[*].variables`
 	// templated URLs (e.g. {scheme}, {host}). Generated code may read this
 	// when constructing the upstream client base URL. Empty == use whatever
 	// default the spec declared.
 	ServerVariables map[string]string
+	// RequestAuthProvider signs requests for security schemes whose credential
+	// acquisition is deployment-specific (for example OIDC workload identity
+	// or AWS SigV4). Generated proxy handlers invoke it only when the OpenAPI
+	// operation selects such a scheme, and fail closed when it is absent.
+	RequestAuthProvider RequestAuthProvider
 }
 
 // ExtraProperty defines an additional schema property to add to every tool's
@@ -98,6 +106,14 @@ func WithRequestTimeout(d time.Duration) Option {
 	}
 }
 
+// WithMaxResponseBytes bounds the upstream response size accepted by generated
+// and dynamic proxy handlers. Values less than one use DefaultMaxResponseBytes.
+func WithMaxResponseBytes(n int64) Option {
+	return func(cfg *Config) {
+		cfg.MaxResponseBytes = n
+	}
+}
+
 // WithServerVariables records substitutions for OpenAPI server URL templates.
 // Generated code reads cfg.ServerVariables when computing the upstream base
 // URL — e.g. for `https://{host}/{basePath}` the caller might pass
@@ -108,6 +124,14 @@ func WithServerVariables(vars map[string]string) Option {
 			cfg.ServerVariables = map[string]string{}
 		}
 		maps.Copy(cfg.ServerVariables, vars)
+	}
+}
+
+// WithRequestAuthProvider configures a custom request signer for generated
+// proxy operations that declare an OpenID Connect or custom HTTP auth scheme.
+func WithRequestAuthProvider(provider RequestAuthProvider) Option {
+	return func(cfg *Config) {
+		cfg.RequestAuthProvider = provider
 	}
 }
 

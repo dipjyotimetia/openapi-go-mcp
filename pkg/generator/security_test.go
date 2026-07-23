@@ -11,6 +11,7 @@ package generator
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -161,23 +162,42 @@ func TestParseSecuritySchemes_OAuth2AsBearer(t *testing.T) {
 	}
 }
 
-func TestParseSecuritySchemes_OpenIDConnectIsDropped(t *testing.T) {
+func TestParseSecuritySchemes_OAuth2ClientCredentials(t *testing.T) {
+	doc := docWithSchemes(openapi3.SecuritySchemes{
+		"service": schemeRef(&openapi3.SecurityScheme{Type: "oauth2", Flows: &openapi3.OAuthFlows{ClientCredentials: &openapi3.OAuthFlow{
+			TokenURL: "https://issuer.example/token",
+			Scopes:   openapi3.StringMap[string]{"write": "Write", "read": "Read"},
+		}}}),
+	})
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 {
+		t.Fatalf("client credentials scheme: %+v", got)
+	}
+	if got[0].OAuthTokenURL != "https://issuer.example/token" || got[0].ClientIDEnvVar != "OAUTH2_CLIENT_ID_SERVICE" || got[0].ClientSecretEnvVar != "OAUTH2_CLIENT_SECRET_SERVICE" {
+		t.Errorf("client credentials fields: %+v", got[0])
+	}
+	if strings.Join(got[0].OAuthScopes, ",") != "read,write" {
+		t.Errorf("scopes must be sorted: %+v", got[0].OAuthScopes)
+	}
+}
+
+func TestParseSecuritySchemes_MTLSSupported(t *testing.T) {
+	doc := docWithSchemes(openapi3.SecuritySchemes{
+		"mtls": schemeRef(&openapi3.SecurityScheme{Type: "mutualTLS"}),
+	})
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 || got[0].Kind != SecurityMTLS {
+		t.Errorf("mutualTLS must be supported: %+v", got)
+	}
+}
+
+func TestParseSecuritySchemes_OpenIDConnectUsesCustomProvider(t *testing.T) {
 	doc := docWithSchemes(openapi3.SecuritySchemes{
 		"oidc": schemeRef(&openapi3.SecurityScheme{Type: "openIdConnect"}),
 	})
-	sink := newDiagSink(&bytes.Buffer{})
-	got := ParseSecuritySchemes(doc, sink)
-	if len(got) != 0 {
-		t.Errorf("openIdConnect must be skipped; got %+v", got)
-	}
-	hasWarn := false
-	for _, d := range sink.finalize() {
-		if d.Code == DiagUnsupportedSecurityScheme {
-			hasWarn = true
-		}
-	}
-	if !hasWarn {
-		t.Errorf("expected diagnostic for unsupported openIdConnect scheme")
+	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
+	if len(got) != 1 || got[0].Kind != SecurityCustom {
+		t.Errorf("openIdConnect must use a custom provider; got %+v", got)
 	}
 }
 

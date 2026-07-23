@@ -112,7 +112,7 @@ paths:
 	}
 	src := string(got)
 	// One helper per scheme. Naming: applyAuth<PascalCaseSchemeName>.
-	if !strings.Contains(src, "func applyAuthBearerAuth(req *http.Request) error") {
+	if !strings.Contains(src, "func applyAuthBearerAuth(ctx context.Context, req *http.Request, cfg *runtime.Config) error") {
 		t.Errorf("expected applyAuthBearerAuth helper; got %q", prefix(got, 1500))
 	}
 	// Helper reads the env var the generator derived.
@@ -123,7 +123,7 @@ paths:
 		t.Errorf("auth helper should call runtime.ApplyBearer")
 	}
 	// The operation block invokes the helper.
-	if !strings.Contains(src, "applyAuthForGetThingWithResponse(httpReq)") {
+	if !strings.Contains(src, "applyAuthForGetThingWithResponse(ctx, httpReq, cfg)") {
 		t.Errorf("operation should invoke its operation security-policy helper")
 	}
 }
@@ -159,13 +159,61 @@ paths:
 	}
 	src := string(got)
 	for _, want := range []string{
-		"func applyAuthForGetThingWithResponse(req *http.Request) error",
-		"if hasAuthApiKey() {",
-		"if hasAuthBearer() {",
+		"func applyAuthForGetThingWithResponse(ctx context.Context, req *http.Request, cfg *runtime.Config) error",
+		"if hasAuthApiKey(cfg) {",
+		"if hasAuthBearer(cfg) {",
 		"runtime.UnsatisfiedSecurityError",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("generated proxy must preserve auth alternatives; missing %q\n%s", want, prefix(got, 2600))
+		}
+	}
+}
+
+func TestRender_ProxyMode_OAuthClientCredentialsAndMTLS(t *testing.T) {
+	spec := []byte(`openapi: 3.1.0
+info: { title: Secure, version: "1.0" }
+servers: [ { url: https://api.test } ]
+security: [ { oauth: [] }, { mtls: [] } ]
+components:
+  securitySchemes:
+    oauth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://issuer.test/token
+          scopes: { write: Write, read: Read }
+    mtls: { type: mutualTLS }
+paths:
+  /thing:
+    get:
+      operationId: getThing
+      responses: { "200": { description: ok } }
+`)
+	tmp := filepath.Join(t.TempDir(), "spec.yaml")
+	if err := os.WriteFile(tmp, spec, 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+	doc, err := loader.Load(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, err := Render(doc, Options{Mode: ModeProxy, PackageName: "securemcp", ModulePath: "example.com/secure"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	src := string(got)
+	for _, want := range []string{
+		"OAUTH2_CLIENT_ID_OAUTH",
+		"OAUTH2_CLIENT_SECRET_OAUTH",
+		"runtime.NewClientCredentialsProvider",
+		`TokenURL: "https://issuer.test/token"`,
+		`Scopes: []string{"read", "write"}`,
+		"mTLS client is not configured for security scheme %s",
+		"hasAuthMtls(cfg)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("generated secure proxy missing %q\n%s", want, prefix(got, 7000))
 		}
 	}
 }
@@ -330,7 +378,7 @@ paths:
 		"runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)",
 		"context.WithTimeout(ctx, cfg.RequestTimeout)",
 		"runtime.SubstituteServerVariables(baseURL, cfg.ServerVariables)",
-		"runtime.PathEscape(param.Value)",
+		"strings.ReplaceAll(pathStr, \"{\"+\"thingId\"+\"}\", param.Value)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("proxy output missing %q\n--src--\n%s", want, prefix(got, 2400))

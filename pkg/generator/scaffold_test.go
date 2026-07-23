@@ -85,7 +85,7 @@ func TestWriteScaffold_GoSDK_MainCompilesAsAST(t *testing.T) {
 		`"github.com/modelcontextprotocol/go-sdk/mcp"`,
 		"gosdk.NewServer",
 		`mcp.StdioTransport{}`,
-		"petmcp.RegisterPetstoreClient(s)",
+		"petmcp.RegisterPetstoreClient(s, registerOpts...)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("main.go missing %q", want)

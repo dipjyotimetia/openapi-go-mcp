@@ -216,6 +216,125 @@ paths:
 	}
 }
 
+func TestRegister_AppliesCustomAuthProviderForOpenIDConnect(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Workload-Identity"); got != "signed" {
+			t.Errorf("custom signer header = %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	specPath := filepath.Join(t.TempDir(), "oidc.yaml")
+	spec := fmt.Sprintf(`openapi: 3.1.0
+info: { title: OIDC, version: 1.0.0 }
+servers: [ { url: %s } ]
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://issuer.example/.well-known/openid-configuration
+paths:
+  /identity:
+    get:
+      operationId: readIdentity
+      security: [ { oidc: [] } ]
+      responses: { "204": { description: ok } }
+`, upstream.URL)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	server := &fakeServer{}
+	provider := runtime.RequestAuthProviderFunc(func(_ context.Context, req *http.Request) error {
+		req.Header.Set("X-Workload-Identity", "signed")
+		return nil
+	})
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client(), RequestAuthProvider: provider}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	result, err := server.handlers["readIdentity"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
+	if err != nil || result.IsError || result.StatusCode != http.StatusNoContent {
+		t.Fatalf("handler result = %#v, %v", result, err)
+	}
+}
+
+func TestRegister_BoundsUpstreamResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, "12345")
+	}))
+	defer upstream.Close()
+	specPath := filepath.Join(t.TempDir(), "large.yaml")
+	spec := fmt.Sprintf(`openapi: 3.0.3
+info: { title: Large, version: 1.0.0 }
+servers: [ { url: %s } ]
+paths:
+  /large:
+    get:
+      operationId: getLarge
+      responses:
+        "200":
+          description: ok
+          content:
+            text/plain:
+              schema: { type: string }
+`, upstream.URL)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{}
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client(), MaxResponseBytes: 4}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	result, err := server.handlers["getLarge"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
+	if err != nil || !result.IsError || !strings.Contains(result.Text, `"code":"response_too_large"`) {
+		t.Fatalf("handler result = %#v, %v", result, err)
+	}
+}
+
+func TestRegister_UsesOpenAPIParameterSerialization(t *testing.T) {
+	var gotPath, gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.EscapedPath(), r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	specPath := filepath.Join(t.TempDir(), "styles.yaml")
+	spec := fmt.Sprintf(`openapi: 3.0.3
+info: { title: Styles, version: 1.0.0 }
+servers: [ { url: %s } ]
+paths:
+  /things/{id}:
+    get:
+      operationId: getStyledThing
+      parameters:
+        - { name: id, in: path, required: true, style: matrix, explode: true, schema: { type: object } }
+        - { name: filter, in: query, style: deepObject, explode: true, schema: { type: object } }
+      responses: { "204": { description: ok } }
+`, upstream.URL)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{}
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client()}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := server.handlers["getStyledThing"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{
+		"path":  map[string]any{"id": map[string]any{"R": "100", "G": "200"}},
+		"query": map[string]any{"filter": map[string]any{"status": "active"}},
+	}})
+	if err != nil || result.IsError {
+		t.Fatalf("call result=%+v err=%v", result, err)
+	}
+	if gotPath != "/things/;G=200;R=100" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery != "filter%5Bstatus%5D=active" {
+		t.Errorf("query = %q", gotQuery)
+	}
+}
+
 func TestRegister_RemoteSourceRequiresExplicitBaseURL(t *testing.T) {
 	t.Parallel()
 

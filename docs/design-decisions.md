@@ -180,21 +180,21 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 **Cost.** Two codegen templates (`fileTemplate` + `fileTemplateProxy`), two assertions in the renderer, and a small `Options.Mode` branch. The CLI gets three new flags (`-mode`, `-module`, `-sdk`) but they're inert in the default path.
 
-## 14. Env-var-only auth, with conventions matched to harsha-iiiv
+## 14. Environment-first auth with production extension points
 
-**Decision.** Proxy mode authenticates from environment variables. No OAuth2 token-exchange flow, no `--auth-config` YAML, no JSON-mounted credentials. Variable names mirror the TypeScript prior art so users moving between ecosystems aren't surprised: `API_KEY_<NAME>`, `BEARER_TOKEN_<NAME>`, `BASIC_AUTH_USERNAME_<NAME>` + `BASIC_AUTH_PASSWORD_<NAME>`, `OAUTH2_ACCESS_TOKEN_<NAME>`.
+**Decision.** Proxy mode uses environment-derived credentials for standard schemes and keeps deployment-specific signers as explicit runtime options. Variable names remain predictable: `API_KEY_<NAME>`, `BEARER_TOKEN_<NAME>`, `BASIC_AUTH_USERNAME_<NAME>` + `BASIC_AUTH_PASSWORD_<NAME>`, and `OAUTH2_ACCESS_TOKEN_<NAME>`. An OpenAPI `clientCredentials` flow additionally enables `OAUTH2_CLIENT_ID_<NAME>` + `OAUTH2_CLIENT_SECRET_<NAME>`; tokens are acquired over HTTPS, cached, and refreshed before expiry. `mutualTLS` generated scaffolds load certificate paths from `MTLS_CERT_FILE` / `MTLS_KEY_FILE`, with optional CA and server-name variables. OIDC and SigV4 use `runtime.WithRequestAuthProvider` so the generated package never imports a cloud SDK or guesses an identity mechanism.
 
-**Alternative considered.** Full OAuth2 client_credentials / authorization_code flows with a token-acquisition step at startup; or a config file mapping schemes to specific env vars.
+**Alternative considered.** A generic auth-config YAML, authorization-code browser flow, or cloud-specific generated SDK integrations.
 
 **Why env-only.**
 - **Single line of integration with secret stores.** Vault, AWS Secrets Manager, K8s Secrets, Doppler — all surface as env vars. Building a token-fetch loop inside the generated binary would duplicate machinery the deployment already has.
 - **Conventions over configuration.** A config file is one more thing to keep in sync with the spec. The env-var name is derived from the scheme key once; if you rename the scheme, you rename the var.
-- **OAuth2 → Bearer-from-env is honest.** Most OAuth2 deployments fetch a token via a sidecar (or the platform). The generator's job is to forward it, not re-implement RFC 6749.
+- **Client credentials are bounded and reusable.** This non-interactive OAuth grant is suitable for a server process; authorization-code and discovery flows remain deployment-owned.
 - **Matches the dominant TypeScript prior art.** Users moving from `harsha-iiiv/openapi-mcp-generator` see the same env-var shape and don't need to relearn anything.
 
-**When multiple security requirements apply.** OpenAPI's `security: [ { A }, { B } ]` means "A *or* B is sufficient". Proxy mode picks the first requirement whose schemes are all parseable; everything else is anonymous fallback. Spec authors who need true multi-scheme routing should compose schemes within one requirement (`{ A, B }` = both required), which proxy mode applies in alphabetical order. This trade-off is documented in `pkg/generator/security.go::ResolveOperationSecurity`.
+**When multiple security requirements apply.** OpenAPI's `security: [ { A }, { B } ]` means "A *or* B is sufficient"; `{ A, B }` means both. Proxy and dynamic modes retain every fully supported alternative, choose the first one whose complete credentials are available at call time, and fail closed if none is available. An explicit empty requirement remains anonymous.
 
-**Cost.** No support for token rotation without restart; no support for OIDC discovery, mTLS, AWS SigV4, or other transport-level auth. Users who need those plug in a custom `http.Client` via `runtime.WithHTTPClient` from a companion-mode integration — the escape hatch is intact.
+**Cost.** Authorization-code and device flows, OIDC discovery, and cloud credential acquisition are not generated; the application supplies those through the signer extension point. Credentials are read on calls so a rotated environment value takes effect without regenerating, while a changed client-credentials pair replaces its cached provider.
 
 ## 15. Native media content blocks without a base64 text duplicate
 

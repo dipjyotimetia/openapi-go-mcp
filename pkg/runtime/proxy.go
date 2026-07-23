@@ -123,9 +123,15 @@ func (q ProxyQuery) Encode() string {
 // cookie parameters; Query holds every query pair, including repeated names
 // from exploded arrays and the independent keys of exploded objects.
 type ProxyParam struct {
-	Value string
-	Query ProxyQuery
+	Value   string
+	Query   ProxyQuery
+	Cookies []ProxyCookie
 }
+
+// ProxyCookie is one cookie pair emitted by an OpenAPI form-style cookie
+// parameter. Exploded arrays may repeat a cookie name; exploded objects use
+// their property names as cookie names.
+type ProxyCookie struct{ Name, Value string }
 
 // SerializeProxyParam extracts and serializes one OpenAPI parameter using
 // the OpenAPI 3 style/explode rules supported at the parameter's location.
@@ -177,6 +183,9 @@ func missingProxyParamError(group, name string) error {
 func serializeProxyParam(v any, spec ProxyParamSpec) (ProxyParam, error) {
 	if err := validateProxyParamStyle(spec); err != nil {
 		return ProxyParam{}, err
+	}
+	if spec.In == "path" {
+		return ProxyParam{Value: serializePathParam(v, spec)}, nil
 	}
 	switch spec.Style {
 	case "simple":
@@ -234,23 +243,22 @@ func serializeSimple(v any, explode bool) string {
 
 func serializeLabel(v any, explode bool) string {
 	if items, ok := proxyArray(v); ok {
-		sep := ","
-		if explode {
-			sep = "."
-		}
-		return "." + strings.Join(items, sep)
+		return "." + strings.Join(items, ".")
 	}
 	if fields, ok := proxyObject(v); ok {
 		if explode {
 			return "." + strings.Join(objectParts(fields, "="), ".")
 		}
-		return "." + strings.Join(objectParts(fields, ","), ",")
+		return "." + strings.Join(objectParts(fields, "."), ".")
 	}
 	return "." + proxyScalar(v)
 }
 
 func serializeMatrix(name string, v any, explode bool) string {
 	if items, ok := proxyArray(v); ok {
+		if len(items) == 0 {
+			return ";" + name
+		}
 		if explode {
 			parts := make([]string, 0, len(items))
 			for _, item := range items {
@@ -275,12 +283,25 @@ func serializeMatrix(name string, v any, explode bool) string {
 
 func serializeForm(spec ProxyParamSpec, v any) (ProxyParam, error) {
 	if items, ok := proxyArray(v); ok {
-		if spec.In == "query" && spec.Explode {
+		if spec.Explode && spec.In == "query" {
 			query := make(ProxyQuery, 0, len(items))
 			for _, item := range items {
 				query = append(query, ProxyQueryValue{Key: spec.Name, Value: item, AllowReserved: spec.AllowReserved})
 			}
+			if len(query) == 0 {
+				query = append(query, ProxyQueryValue{Key: spec.Name, AllowReserved: spec.AllowReserved})
+			}
 			return ProxyParam{Value: strings.Join(items, ","), Query: query}, nil
+		}
+		if spec.Explode && spec.In == "cookie" {
+			cookies := make([]ProxyCookie, 0, len(items))
+			for _, item := range items {
+				cookies = append(cookies, ProxyCookie{Name: spec.Name, Value: item})
+			}
+			if len(cookies) == 0 {
+				cookies = append(cookies, ProxyCookie{Name: spec.Name})
+			}
+			return ProxyParam{Value: strings.Join(items, ","), Cookies: cookies}, nil
 		}
 		value := strings.Join(items, ",")
 		return formScalarParam(spec, value), nil
@@ -293,6 +314,13 @@ func serializeForm(spec ProxyParamSpec, v any) (ProxyParam, error) {
 			}
 			return ProxyParam{Value: strings.Join(objectParts(fields, "="), "&"), Query: query}, nil
 		}
+		if spec.In == "cookie" && spec.Explode {
+			cookies := make([]ProxyCookie, 0, len(fields))
+			for _, field := range fields {
+				cookies = append(cookies, ProxyCookie{Name: field.Key, Value: field.Value})
+			}
+			return ProxyParam{Value: strings.Join(objectParts(fields, "="), ";"), Cookies: cookies}, nil
+		}
 		value := strings.Join(objectParts(fields, ","), ",")
 		return formScalarParam(spec, value), nil
 	}
@@ -304,16 +332,19 @@ func formScalarParam(spec ProxyParamSpec, value string) ProxyParam {
 	if spec.In == "query" {
 		param.Query = ProxyQuery{{Key: spec.Name, Value: value, AllowReserved: spec.AllowReserved}}
 	}
+	if spec.In == "cookie" {
+		param.Cookies = []ProxyCookie{{Name: spec.Name, Value: value}}
+	}
 	return param
 }
 
 func serializeDelimited(spec ProxyParamSpec, v any, delimiter string) (ProxyParam, error) {
-	if _, ok := proxyObject(v); ok {
-		return ProxyParam{}, fmt.Errorf("%s does not support object values", spec.Style)
-	}
 	value := proxyScalar(v)
 	if items, ok := proxyArray(v); ok {
 		value = strings.Join(items, delimiter)
+	}
+	if fields, ok := proxyObject(v); ok {
+		value = strings.Join(objectParts(fields, delimiter), delimiter)
 	}
 	return ProxyParam{Value: value, Query: ProxyQuery{{Key: spec.Name, Value: value, AllowReserved: spec.AllowReserved}}}, nil
 }
@@ -379,7 +410,10 @@ func proxyScalar(v any) string {
 
 func encodeQueryComponent(value string, allowReserved bool) string {
 	if !allowReserved {
-		return url.QueryEscape(value)
+		// url.QueryEscape uses '+' for spaces, which is valid form encoding but
+		// not the percent-encoded delimiter form defined by OpenAPI's parameter
+		// serialization tables (notably spaceDelimited).
+		return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
 	}
 	var b strings.Builder
 	for i := 0; i < len(value); i++ {
@@ -391,6 +425,99 @@ func encodeQueryComponent(value string, allowReserved bool) string {
 		fmt.Fprintf(&b, "%%%02X", c)
 	}
 	return b.String()
+}
+
+// A literal # cannot be safely retained in a query component: Go (and URI
+// parsers generally) treats it as the fragment delimiter. It is therefore
+// percent-encoded even when allowReserved is true, preserving the value sent
+// to the upstream service instead of silently losing everything after it.
+
+func serializePathParam(v any, spec ProxyParamSpec) string {
+	name := url.PathEscape(spec.Name)
+	escape := func(value any) string { return url.PathEscape(proxyScalar(value)) }
+	if items, ok := proxyArrayRaw(v, escape); ok {
+		switch spec.Style {
+		case "simple":
+			return strings.Join(items, ",")
+		case "label":
+			return "." + strings.Join(items, ".")
+		case "matrix":
+			if len(items) == 0 {
+				return ";" + name
+			}
+			if spec.Explode {
+				parts := make([]string, 0, len(items))
+				for _, item := range items {
+					parts = append(parts, ";"+name+"="+item)
+				}
+				return strings.Join(parts, "")
+			}
+			return ";" + name + "=" + strings.Join(items, ",")
+		}
+	}
+	if fields, ok := proxyObjectEscaped(v, escape); ok {
+		switch spec.Style {
+		case "simple":
+			if spec.Explode {
+				return strings.Join(objectParts(fields, "="), ",")
+			}
+			return strings.Join(objectParts(fields, ","), ",")
+		case "label":
+			if spec.Explode {
+				return "." + strings.Join(objectParts(fields, "="), ".")
+			}
+			return "." + strings.Join(objectParts(fields, "."), ".")
+		case "matrix":
+			if spec.Explode {
+				parts := make([]string, 0, len(fields))
+				for _, field := range fields {
+					parts = append(parts, ";"+field.Key+"="+field.Value)
+				}
+				return strings.Join(parts, "")
+			}
+			return ";" + name + "=" + strings.Join(objectParts(fields, ","), ",")
+		}
+	}
+	value := escape(v)
+	switch spec.Style {
+	case "simple":
+		return value
+	case "label":
+		return "." + value
+	case "matrix":
+		return ";" + name + "=" + value
+	default:
+		return value
+	}
+}
+
+func proxyArrayRaw(v any, transform func(any) string) ([]string, bool) {
+	items, ok := v.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, transform(item))
+	}
+	return out, true
+}
+
+func proxyObjectEscaped(v any, transform func(any) string) ([]proxyObjectField, bool) {
+	object, ok := v.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	out := make([]proxyObjectField, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, proxyObjectField{Key: transform(key), Value: transform(object[key])})
+	}
+	return out, true
 }
 
 func isUnreserved(c byte) bool {
@@ -464,12 +591,18 @@ func BuildProxyURL(baseURL, opPath string, query any) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse base URL %q: %w", baseURL, err)
 	}
-	basePath := strings.TrimRight(u.Path, "/")
+	basePath := strings.TrimRight(u.EscapedPath(), "/")
 	op := opPath
 	if op != "" && !strings.HasPrefix(op, "/") {
 		op = "/" + op
 	}
-	u.Path = basePath + op
+	rawPath := basePath + op
+	decodedPath, err := url.PathUnescape(rawPath)
+	if err != nil {
+		return "", fmt.Errorf("decode proxy path %q: %w", rawPath, err)
+	}
+	u.Path = decodedPath
+	u.RawPath = rawPath
 	extraQuery, err := encodeProxyQuery(query)
 	if err != nil {
 		return "", err
@@ -556,15 +689,40 @@ func EncodeFormBody(args map[string]any) (io.Reader, string, error) {
 	return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", nil
 }
 
-// ReadResponseBody is a small wrapper that drains resp.Body in one
-// allocation, returning ([]byte, error). Exists so the generated handler
-// has a single helper call rather than inlined io.ReadAll boilerplate
-// that varies across operations.
+// DefaultMaxResponseBytes is the fail-safe response limit applied by proxy
+// handlers when no explicit maximum is configured. It limits the memory and
+// base64 amplification an untrusted or unexpectedly chatty upstream can cause.
+const DefaultMaxResponseBytes int64 = 16 << 20
+
+// ReadResponseBody drains an HTTP response up to DefaultMaxResponseBytes.
+// New proxy code should use ReadResponseBodyLimit so deployments can choose a
+// smaller or larger bound through runtime.WithMaxResponseBytes.
 func ReadResponseBody(resp *http.Response) ([]byte, error) {
+	return ReadResponseBodyLimit(resp, DefaultMaxResponseBytes)
+}
+
+// ReadResponseBodyLimit drains and closes resp.Body while enforcing maxBytes.
+// A non-positive maxBytes uses DefaultMaxResponseBytes. Over-limit responses
+// become a structured tool error before their payload is exposed to an MCP
+// client or stored fully in memory.
+func ReadResponseBodyLimit(resp *http.Response, maxBytes int64) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, nil
 	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxResponseBytes
+	}
 	// Drained body; close errors after io.ReadAll are not actionable.
 	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(resp.Body)
+	if resp.ContentLength > maxBytes {
+		return nil, &ToolError{Status: http.StatusBadGateway, Code: "response_too_large", Message: fmt.Sprintf("upstream response exceeds configured limit of %d bytes", maxBytes)}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, &ToolError{Status: http.StatusBadGateway, Code: "response_too_large", Message: fmt.Sprintf("upstream response exceeds configured limit of %d bytes", maxBytes)}
+	}
+	return body, nil
 }

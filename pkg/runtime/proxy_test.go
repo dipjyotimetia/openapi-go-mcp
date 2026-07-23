@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -22,6 +24,26 @@ func TestDecodeProxyParam_StringPassthrough(t *testing.T) {
 	got, present, err := DecodeProxyParam(args, "query", "status", false)
 	if err != nil || !present || got != "available" {
 		t.Errorf("got (%q, %v, %v); want (\"available\", true, nil)", got, present, err)
+	}
+}
+
+func TestReadResponseBodyLimitRejectsDeclaredAndStreamedOversize(t *testing.T) {
+	for _, response := range []*http.Response{
+		{Body: io.NopCloser(strings.NewReader("12345")), ContentLength: 5},
+		{Body: io.NopCloser(strings.NewReader("12345")), ContentLength: -1},
+	} {
+		_, err := ReadResponseBodyLimit(response, 4)
+		var toolErr *ToolError
+		if !errors.As(err, &toolErr) || toolErr.Code != "response_too_large" || toolErr.Status != http.StatusBadGateway {
+			t.Fatalf("oversize result = %v", err)
+		}
+	}
+}
+
+func TestReadResponseBodyLimitAcceptsBoundedResponse(t *testing.T) {
+	body, err := ReadResponseBodyLimit(&http.Response{Body: io.NopCloser(strings.NewReader("1234")), ContentLength: 4}, 4)
+	if err != nil || string(body) != "1234" {
+		t.Fatalf("body = %q, err = %v", body, err)
 	}
 }
 
@@ -146,6 +168,85 @@ func TestSerializeProxyParam_AllowReservedPreservesQueryReservedCharacters(t *te
 	}
 	if got != "https://api.example.com/pets?redirect=/a/b?x=1&y=2" {
 		t.Errorf("allowReserved URL = %q", got)
+	}
+}
+
+func TestSerializeProxyParam_LabelAndDelimitedObjects(t *testing.T) {
+	args := map[string]any{
+		"path":  map[string]any{"label": []any{"blue", "black"}, "object": map[string]any{"R": "100", "G": "200"}},
+		"query": map[string]any{"space": map[string]any{"R": "100", "G": "200"}, "pipe": map[string]any{"R": "100", "G": "200"}},
+	}
+	cases := []struct {
+		name string
+		spec ProxyParamSpec
+		want string
+	}{
+		{"label array", ProxyParamSpec{Name: "label", In: "path", Style: "label"}, ".blue.black"},
+		{"label object", ProxyParamSpec{Name: "object", In: "path", Style: "label"}, ".G.200.R.100"},
+		{"space object", ProxyParamSpec{Name: "space", In: "query", Style: "spaceDelimited"}, "space=G%20200%20R%20100"},
+		{"pipe object", ProxyParamSpec{Name: "pipe", In: "query", Style: "pipeDelimited"}, "pipe=G%7C200%7CR%7C100"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, present, err := SerializeProxyParam(args, tt.spec, true)
+			if err != nil || !present {
+				t.Fatalf("serialize: %+v present=%v err=%v", got, present, err)
+			}
+			actual := got.Value
+			if len(got.Query) > 0 {
+				actual = got.Query.Encode()
+			}
+			if actual != tt.want {
+				t.Errorf("serialized = %q, want %q", actual, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildProxyURL_PreservesSerializedPathAndFragmentValue(t *testing.T) {
+	pathArgs := map[string]any{"path": map[string]any{"id": "a/b"}}
+	pathParam, _, err := SerializeProxyParam(pathArgs, ProxyParamSpec{Name: "id", In: "path", Style: "simple"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryArgs := map[string]any{"query": map[string]any{"redirect": "/a#section?x=1"}}
+	queryParam, _, err := SerializeProxyParam(queryArgs, ProxyParamSpec{Name: "redirect", In: "query", Style: "form", Explode: true, AllowReserved: true}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotPath, gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.EscapedPath(), r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	target, err := BuildProxyURL(upstream.URL, "/things/"+pathParam.Value, queryParam.Query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if gotPath != "/things/a%2Fb" {
+		t.Errorf("escaped path = %q, want /things/a%%2Fb", gotPath)
+	}
+	if gotQuery != "redirect=/a%23section?x=1" {
+		t.Errorf("raw query = %q, want hash preserved as escaped data", gotQuery)
+	}
+}
+
+func TestSerializeProxyParam_CookieExplodeAndEmptyArray(t *testing.T) {
+	args := map[string]any{"cookie": map[string]any{"colors": []any{}, "prefs": map[string]any{"theme": "dark"}}}
+	colors, _, err := SerializeProxyParam(args, ProxyParamSpec{Name: "colors", In: "cookie", Style: "form", Explode: true}, true)
+	if err != nil || len(colors.Cookies) != 1 || colors.Cookies[0] != (ProxyCookie{Name: "colors"}) {
+		t.Fatalf("empty exploded cookie = %+v, err=%v", colors.Cookies, err)
+	}
+	prefs, _, err := SerializeProxyParam(args, ProxyParamSpec{Name: "prefs", In: "cookie", Style: "form", Explode: true}, true)
+	if err != nil || len(prefs.Cookies) != 1 || prefs.Cookies[0] != (ProxyCookie{Name: "theme", Value: "dark"}) {
+		t.Fatalf("exploded object cookie = %+v, err=%v", prefs.Cookies, err)
 	}
 }
 
