@@ -198,13 +198,13 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 ## 15. Native media content blocks without a base64 text duplicate
 
-**Decision.** 2xx responses with an `image/*` or `audio/*` content type surface as native MCP `ImageContent` / `AudioContent` blocks, and *only* as those blocks — no base64 copy in the text content or the structured envelope. Detection is a uniform media-type prefix match after the JSON/text checks, so `image/foo+json` stays JSON and `image/svg+xml` counts as an image. Everything MCP has no native type for (video, PDF, arbitrary binary) keeps the base64-text envelope.
+**Decision.** 2xx `image/*` and `audio/*` responses surface as native MCP `ImageContent` / `AudioContent` blocks; PDFs, video, and other binary types surface as embedded blob resources. No binary path duplicates payloads as base64 text or structured content. Generic resource URIs are opaque content-addressed URNs, not fetchable upstream URLs. Detection is a uniform media-type prefix match after the JSON/text checks, so `image/foo+json` stays JSON and `image/svg+xml` counts as an image.
 
 **Alternative considered.** Mirror the payload as base64 into the text block alongside the media block (mark3labs' `NewToolResultImage` helper does this). Rejected: a multi-MB image would ship twice (or three times with the structured envelope) in every tool result, and the media block already carries the bytes in the shape clients render.
 
 **Why the uniform `image/*` rule.** Special-casing `image/svg+xml` (some clients only render raster images) would trade a predictable rule for a guess about client capabilities. Clients that can't render a media type still receive the MIME type and can say so.
 
-**Cost.** Clients that previously parsed base64 out of the text block for image/audio responses must read the media block instead (flagged in the changelog). Video and PDF stay base64 text until embedded-resource support lands (`TODO.md`).
+**Cost.** Clients that previously parsed base64 out of text must read the native media or resource block instead (flagged in the changelog). Binary result size remains bounded by the proxy response limit; first-class progressive streaming is separate work.
 
 ## Non-goals
 

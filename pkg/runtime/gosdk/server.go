@@ -101,6 +101,8 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 		content = []mcp.Content{&mcp.ImageContent{Data: result.Binary, MIMEType: result.MIMEType}}
 	case runtime.MediaAudio:
 		content = []mcp.Content{&mcp.AudioContent{Data: result.Binary, MIMEType: result.MIMEType}}
+	case runtime.MediaResource:
+		content = []mcp.Content{&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{URI: result.ResourceURI, MIMEType: result.MIMEType, Blob: result.Binary}}}
 	default:
 		content = []mcp.Content{&mcp.TextContent{Text: result.Text}}
 	}

@@ -103,6 +103,22 @@ func TestToMCPResult_AudioMedia(t *testing.T) {
 	}
 }
 
+func TestToMCPResult_EmbeddedResource(t *testing.T) {
+	raw := []byte("%PDF")
+	res := toMCPResult(runtime.NewToolResultResource(raw, "application/pdf"))
+	resource, ok := res.Content[0].(mcp.EmbeddedResource)
+	if !ok {
+		t.Fatalf("content block = %#v", res.Content[0])
+	}
+	blob, ok := resource.Resource.(mcp.BlobResourceContents)
+	if !ok {
+		t.Fatalf("resource = %T", resource.Resource)
+	}
+	if blob.Blob != base64.StdEncoding.EncodeToString(raw) || blob.MIMEType != "application/pdf" || blob.URI == "" {
+		t.Errorf("blob = %#v", blob)
+	}
+}
+
 func TestToMCPResult_TextUnchanged(t *testing.T) {
 	res := toMCPResult(runtime.NewToolResultText("hi"))
 	txt, ok := res.Content[0].(mcp.TextContent)

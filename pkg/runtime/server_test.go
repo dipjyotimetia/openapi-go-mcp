@@ -9,7 +9,6 @@
 package runtime
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -142,7 +141,7 @@ func TestNewToolResultFromHTTP_2xxText_VerbatimNotBase64(t *testing.T) {
 	}
 }
 
-func TestNewToolResultFromHTTP_2xxNonJSON_Base64(t *testing.T) {
+func TestNewToolResultFromHTTP_2xxNonJSON_EmbeddedResource(t *testing.T) {
 	raw := []byte{0x01, 0x02, 0x03}
 	header := http.Header{}
 	header.Set("Content-Type", "application/octet-stream")
@@ -151,19 +150,17 @@ func TestNewToolResultFromHTTP_2xxNonJSON_Base64(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("2xx binary should still be success")
 	}
-	if res.MediaKind != MediaNone {
-		t.Errorf("octet-stream must not surface as media, got %q", res.MediaKind)
+	if res.MediaKind != MediaResource {
+		t.Errorf("octet-stream must surface as an embedded resource, got %q", res.MediaKind)
 	}
-	sc, ok := res.StructuredContent.(map[string]any)
-	if !ok {
-		t.Fatalf("StructuredContent should be base64 envelope, got %T", res.StructuredContent)
+	if res.MIMEType != "application/octet-stream" {
+		t.Errorf("MIMEType = %q", res.MIMEType)
 	}
-	if sc["contentType"] != "application/octet-stream" {
-		t.Errorf("contentType: got %v", sc["contentType"])
+	if string(res.Binary) != string(raw) || !strings.HasPrefix(res.ResourceURI, "urn:openapi-go-mcp:response:sha256:") {
+		t.Errorf("resource payload = %v URI = %q", res.Binary, res.ResourceURI)
 	}
-	want := base64.StdEncoding.EncodeToString(raw)
-	if sc["base64"] != want {
-		t.Errorf("base64: got %v want %s", sc["base64"], want)
+	if res.Text != "" || res.StructuredContent != nil {
+		t.Errorf("resource must not duplicate payload into text/structured content: %#v", res)
 	}
 }
 

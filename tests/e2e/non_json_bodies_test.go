@@ -305,7 +305,7 @@ func TestE2E_NonJSON_Text_PlainBody(t *testing.T) {
 	}
 }
 
-func TestE2E_NonJSON_Response_Binary_Base64Wrapped(t *testing.T) {
+func TestE2E_NonJSON_Response_Binary_EmbeddedResource(t *testing.T) {
 	upstream, _, _ := newNonJSONUpstream(t)
 	cs := connectNonJSONClient(t, upstream.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -323,11 +323,18 @@ func TestE2E_NonJSON_Response_Binary_Base64Wrapped(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected tool error: %v", textOf(res))
 	}
-	// The non-JSON response wrapper base64-encodes the bytes into Text so
-	// MCP clients that only look at content/text get something legible.
-	want := base64.StdEncoding.EncodeToString([]byte{0xCA, 0xFE, 0xBA, 0xBE})
-	if got := textOf(res); got != want {
-		t.Errorf("text content = %q, want %q", got, want)
+	if len(res.Content) != 1 {
+		t.Fatalf("content blocks = %d, want 1", len(res.Content))
+	}
+	resource, ok := res.Content[0].(*mcp.EmbeddedResource)
+	if !ok || resource.Resource == nil {
+		t.Fatalf("content block = %#v, want *mcp.EmbeddedResource", res.Content[0])
+	}
+	if resource.Resource.MIMEType != "application/octet-stream" || string(resource.Resource.Blob) != string([]byte{0xCA, 0xFE, 0xBA, 0xBE}) {
+		t.Errorf("resource = %#v", resource.Resource)
+	}
+	if !strings.HasPrefix(resource.Resource.URI, "urn:openapi-go-mcp:response:sha256:") {
+		t.Errorf("resource URI = %q", resource.Resource.URI)
 	}
 }
 

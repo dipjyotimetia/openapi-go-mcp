@@ -112,6 +112,12 @@ func toMCPResult(result *runtime.CallToolResult) *mcp.CallToolResult {
 			block = mcp.AudioContent{Type: "audio", Data: data, MIMEType: result.MIMEType}
 		}
 		res = &mcp.CallToolResult{Content: []mcp.Content{block}, IsError: result.IsError}
+	case runtime.MediaResource:
+		block := mcp.EmbeddedResource{
+			Type:     "resource",
+			Resource: mcp.BlobResourceContents{URI: result.ResourceURI, MIMEType: result.MIMEType, Blob: base64.StdEncoding.EncodeToString(result.Binary)},
+		}
+		res = &mcp.CallToolResult{Content: []mcp.Content{block}, IsError: result.IsError}
 	default:
 		if result.IsError {
 			res = mcp.NewToolResultError(result.Text)
