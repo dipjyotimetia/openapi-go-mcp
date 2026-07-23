@@ -240,17 +240,24 @@ import (
 func main() {
 	raw, s := {{.Adapter}}.NewServer({{quote .ServerName}}, {{quote .ServerVersion}})
 	registerOpts := []runtime.Option{}
-	{{- if .UsesMTLS}}
-	mtlsClient, err := runtime.HTTPClientWithMTLS(nil, runtime.MTLSConfig{
-		CertificateFile: os.Getenv("MTLS_CERT_FILE"),
-		KeyFile:         os.Getenv("MTLS_KEY_FILE"),
-		CAFile:          os.Getenv("MTLS_CA_FILE"),
-		ServerName:      os.Getenv("MTLS_SERVER_NAME"),
-	})
-	if err != nil {
-		log.Fatalf("configure mTLS: %v", err)
+	if os.Getenv("ALLOW_INSECURE_AUTH") == "1" {
+		registerOpts = append(registerOpts, runtime.WithAllowInsecureAuth())
 	}
-	registerOpts = append(registerOpts, runtime.WithMTLSHTTPClient(mtlsClient))
+	{{- if .UsesMTLS}}
+	mtlsCertFile := os.Getenv("MTLS_CERT_FILE")
+	mtlsKeyFile := os.Getenv("MTLS_KEY_FILE")
+	if mtlsCertFile != "" || mtlsKeyFile != "" {
+		mtlsClient, err := runtime.HTTPClientWithMTLS(nil, runtime.MTLSConfig{
+			CertificateFile: mtlsCertFile,
+			KeyFile:         mtlsKeyFile,
+			CAFile:          os.Getenv("MTLS_CA_FILE"),
+			ServerName:      os.Getenv("MTLS_SERVER_NAME"),
+		})
+		if err != nil {
+			log.Fatalf("configure mTLS: %v", err)
+		}
+		registerOpts = append(registerOpts, runtime.WithMTLSHTTPClient(mtlsClient))
+	}
 	{{- end}}
 	{{.PkgName}}.{{.RegisterFunc}}(s, registerOpts...)
 

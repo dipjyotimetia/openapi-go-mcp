@@ -32,6 +32,18 @@ type RequestAuthProvider interface {
 	Apply(ctx context.Context, req *http.Request) error
 }
 
+// SchemeRequestAuthProvider is an optional, scheme-aware extension of
+// RequestAuthProvider. Implement it when one process serves operations that
+// use distinct custom schemes (for example OIDC and SigV4) and the provider
+// needs to select different credentials or signing logic for each scheme.
+// Existing RequestAuthProvider implementations remain valid and are treated
+// as available for every custom scheme.
+type SchemeRequestAuthProvider interface {
+	RequestAuthProvider
+	SupportsSecurityScheme(name string) bool
+	ApplyForSecurityScheme(ctx context.Context, req *http.Request, name string) error
+}
+
 // RequestAuthProviderFunc adapts a function to RequestAuthProvider. It is
 // useful for applications that need to supply an OIDC or SigV4 signer without
 // coupling generated proxy code to a cloud SDK.
@@ -59,6 +71,51 @@ func ApplyRequestAuth(ctx context.Context, req *http.Request, provider RequestAu
 		ctx = context.Background()
 	}
 	return provider.Apply(ctx, req)
+}
+
+// RequestAuthProviderAvailable reports whether provider can satisfy name. A
+// legacy provider without scheme selection remains available for compatibility.
+func RequestAuthProviderAvailable(provider RequestAuthProvider, name string) bool {
+	if provider == nil {
+		return false
+	}
+	if schemeProvider, ok := provider.(SchemeRequestAuthProvider); ok {
+		return schemeProvider.SupportsSecurityScheme(name)
+	}
+	return true
+}
+
+// ApplyRequestAuthForSecurityScheme invokes a scheme-aware provider when it is
+// available, otherwise preserving the legacy ApplyRequestAuth behavior.
+func ApplyRequestAuthForSecurityScheme(ctx context.Context, req *http.Request, provider RequestAuthProvider, name string) error {
+	if !RequestAuthProviderAvailable(provider, name) {
+		return fmt.Errorf("request auth provider does not support security scheme %q", name)
+	}
+	if schemeProvider, ok := provider.(SchemeRequestAuthProvider); ok {
+		if req == nil {
+			return fmt.Errorf("request auth requires a non-nil request")
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return schemeProvider.ApplyForSecurityScheme(ctx, req, name)
+	}
+	return ApplyRequestAuth(ctx, req, provider)
+}
+
+// HTTPClientWithoutRedirects returns a clone of base that preserves its
+// transport and timeout but never follows redirects. Proxy handlers attach
+// credentials before dispatch, so accepting a redirect could forward an API
+// key or deployment-specific signature to a different origin.
+func HTTPClientWithoutRedirects(base *http.Client) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	clone := *base
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &clone
 }
 
 // ClientCredentialsConfig configures OAuth 2.0 client-credentials token
@@ -221,7 +278,7 @@ func (p *ClientCredentialsProvider) fetchToken(ctx context.Context) (string, tim
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("request OAuth token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		// Do not return the response body: identity providers can include
 		// diagnostics or echoed details that should not reach MCP clients.
@@ -257,12 +314,9 @@ func (p *ClientCredentialsProvider) fetchToken(ctx context.Context) (string, tim
 }
 
 func cloneTokenHTTPClient(base *http.Client, timeout time.Duration) *http.Client {
-	clone := *base
+	clone := *HTTPClientWithoutRedirects(base)
 	if clone.Timeout == 0 {
 		clone.Timeout = timeout
-	}
-	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
 	}
 	return &clone
 }

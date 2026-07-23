@@ -290,7 +290,7 @@ paths:
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"getThing","arguments":{}}}`,
 	}
-	resp := stdioRoundTrip(t, bin, []string{"BEARER_TOKEN_BEARERAUTH=test-token-123"}, reqs, 20*time.Second)
+	resp := stdioRoundTrip(t, bin, []string{"BEARER_TOKEN_BEARERAUTH=test-token-123", "ALLOW_INSECURE_AUTH=1"}, reqs, 20*time.Second)
 	if resp == "" {
 		t.Fatalf("no response from server")
 	}

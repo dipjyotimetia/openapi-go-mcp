@@ -43,6 +43,9 @@ type Config struct {
 	// for client-certificate authentication. It keeps OpenAPI mutualTLS schemes
 	// fail-closed instead of treating any custom HTTP client as proof of mTLS.
 	MTLSConfigured bool
+	// AllowInsecureAuth permits credentials on an HTTP upstream. It is intended
+	// only for isolated local development; production defaults to HTTPS-only.
+	AllowInsecureAuth bool
 	// ServerVariables holds substitutions for OpenAPI `servers[*].variables`
 	// templated URLs (e.g. {scheme}, {host}). Generated code may read this
 	// when constructing the upstream client base URL. Empty == use whatever
@@ -109,6 +112,15 @@ func WithMTLSHTTPClient(c *http.Client) Option {
 	return func(cfg *Config) {
 		cfg.HTTPClient = c
 		cfg.MTLSConfigured = c != nil
+	}
+}
+
+// WithAllowInsecureAuth permits authenticated requests to an HTTP upstream.
+// Use only for local development; the default rejects credential-bearing
+// requests unless their final URL uses HTTPS.
+func WithAllowInsecureAuth() Option {
+	return func(cfg *Config) {
+		cfg.AllowInsecureAuth = true
 	}
 }
 
@@ -213,12 +225,17 @@ func AddExtraPropertiesToTool(tool Tool, properties []ExtraProperty) Tool {
 		default:
 			t = "string"
 		}
-		entry := map[string]any{"type": t}
+		var entry map[string]any
+		if tool.StrictInputSchema && !p.Required {
+			entry = map[string]any{"type": []any{t, "null"}}
+		} else {
+			entry = map[string]any{"type": t}
+		}
 		if p.Description != "" {
 			entry["description"] = p.Description
 		}
 		props[p.Name] = entry
-		if p.Required {
+		if p.Required || tool.StrictInputSchema {
 			required = append(required, p.Name)
 		}
 	}

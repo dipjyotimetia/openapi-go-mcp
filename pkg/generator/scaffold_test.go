@@ -122,6 +122,31 @@ func TestWriteScaffold_Mark3labs_MainShape(t *testing.T) {
 	}
 }
 
+func TestWriteScaffold_MTLSIsOptionalAtStartup(t *testing.T) {
+	src := string(renderScaffoldMain(Options{PackageName: "securemcp", ModulePath: "example.com/secure"}, newScaffoldDoc("Secure"), "gosdk", []SecurityScheme{{Name: "mtls", Kind: SecurityMTLS}}))
+	for _, want := range []string{
+		`mtlsCertFile := os.Getenv("MTLS_CERT_FILE")`,
+		`if mtlsCertFile != "" || mtlsKeyFile != "" {`,
+		"runtime.WithMTLSHTTPClient(mtlsClient)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("mTLS scaffold missing %q\n%s", want, src)
+		}
+	}
+}
+
+func TestWriteScaffold_AllowInsecureAuthRequiresExplicitEnvironmentOptIn(t *testing.T) {
+	src := string(renderScaffoldMain(Options{PackageName: "securemcp", ModulePath: "example.com/secure"}, newScaffoldDoc("Secure"), "gosdk", []SecurityScheme{{Name: "bearer", Kind: SecurityHTTPBearer}}))
+	for _, want := range []string{
+		`os.Getenv("ALLOW_INSECURE_AUTH") == "1"`,
+		"runtime.WithAllowInsecureAuth()",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("scaffold missing explicit insecure-auth opt-in %q\n%s", want, src)
+		}
+	}
+}
+
 func TestWriteScaffold_GoMod_ShapeAndOrder(t *testing.T) {
 	out := t.TempDir()
 	err := WriteScaffoldWithOverrides(Options{

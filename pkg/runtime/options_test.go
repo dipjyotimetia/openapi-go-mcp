@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -98,6 +99,25 @@ func TestApplyConfig_RequiredPropagation(t *testing.T) {
 	req, ok := schema["required"].([]any)
 	if !ok || len(req) != 1 || req[0] != "tok" {
 		t.Errorf("required: got %v", schema["required"])
+	}
+}
+
+func TestApplyConfig_StrictSchemaOptionalExtraIsNullableAndRequired(t *testing.T) {
+	tool := Tool{StrictInputSchema: true, RawInputSchema: []byte(`{"type":"object","additionalProperties":false,"properties":{}}`)}
+	got := ApplyConfig(tool, &Config{ExtraProperties: []ExtraProperty{{Name: "tenant", Type: "string"}}})
+	var schema map[string]any
+	if err := json.Unmarshal(got.RawInputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	props := schema["properties"].(map[string]any)
+	entry := props["tenant"].(map[string]any)
+	types := entry["type"].([]any)
+	if !reflect.DeepEqual(types, []any{"string", "null"}) {
+		t.Errorf("tenant type = %#v", types)
+	}
+	required := schema["required"].([]any)
+	if !reflect.DeepEqual(required, []any{"tenant"}) {
+		t.Errorf("required = %#v", required)
 	}
 }
 

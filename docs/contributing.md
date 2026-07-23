@@ -12,7 +12,7 @@ go mod download
 
 Requirements:
 
-- Go 1.23 or newer
+- Go 1.26 or newer (generated scaffold source itself targets Go 1.23+)
 - `oapi-codegen` (for regenerating example clients): `go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest`
 
 ## Common tasks

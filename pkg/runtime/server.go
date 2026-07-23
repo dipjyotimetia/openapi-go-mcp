@@ -34,10 +34,13 @@ type MCPServer interface {
 
 // Tool describes an MCP tool independent of any MCP library.
 type Tool struct {
-	Name            string
-	Description     string
-	RawInputSchema  json.RawMessage
-	RawOutputSchema json.RawMessage
+	Name           string
+	Description    string
+	RawInputSchema json.RawMessage
+	// StrictInputSchema marks an OpenAI strict-schema registration. Runtime
+	// schema augmentations must retain strict invariants for this surface.
+	StrictInputSchema bool
+	RawOutputSchema   json.RawMessage
 	// Annotations carries the MCP tool-annotation hints. Nil means "no
 	// annotations" — the underlying SDK omits the block entirely.
 	Annotations *ToolAnnotations

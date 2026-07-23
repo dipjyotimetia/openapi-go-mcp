@@ -25,6 +25,7 @@ const toolLiteralSrc = `s.AddTool(
 			Name:           "{{.ToolName}}",
 			Description:    {{quote .Description}},
 			RawInputSchema: {{if $.ProviderAware}}inputSchemaForProvider(provider, {{schemaConst .ToolName}}, {{openAISchemaConst .ToolName}}){{else}}json.RawMessage({{schemaConst .ToolName}}){{end}},
+			StrictInputSchema: {{if $.ProviderAware}}provider == runtime.LLMProviderOpenAI{{else}}false{{end}},
 			{{- if .OutputSchemaJSON}}
 			RawOutputSchema: json.RawMessage({{outputSchemaConst .ToolName}}),
 			{{- end}}
@@ -274,6 +275,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	httpClient = runtime.HTTPClientWithoutRedirects(httpClient)
 
 	{{range .Ops}}
 	// {{.Method}} {{.Path}}
@@ -423,7 +425,7 @@ func hasAuth{{pascalCase .Name}}(cfg *runtime.Config) bool {
 {{- if eq (printf "%s" .Kind) "httpBasic"}}
 	return os.Getenv({{quote .UsernameEnvVar}}) != "" && os.Getenv({{quote .PasswordEnvVar}}) != ""
 {{- else if eq (printf "%s" .Kind) "custom"}}
-	return cfg.RequestAuthProvider != nil
+	return runtime.RequestAuthProviderAvailable(cfg.RequestAuthProvider, {{quote .Name}})
 {{- else if eq (printf "%s" .Kind) "mtls"}}
 	return cfg.MTLSConfigured
 {{- else if and (eq (printf "%s" .Kind) "oauth2") .OAuthTokenURL}}
@@ -466,7 +468,7 @@ func applyAuth{{pascalCase .Name}}(ctx context.Context, req *http.Request, cfg *
 	}
 	return runtime.ApplyBasic(req, user, pass)
 {{- else if eq (printf "%s" .Kind) "custom"}}
-	return runtime.ApplyRequestAuth(ctx, req, cfg.RequestAuthProvider)
+	return runtime.ApplyRequestAuthForSecurityScheme(ctx, req, cfg.RequestAuthProvider, {{quote .Name}})
 {{- else if eq (printf "%s" .Kind) "mtls"}}
 	if !cfg.MTLSConfigured {
 		return fmt.Errorf("mTLS client is not configured for security scheme %s", {{quote .Name}})
@@ -513,13 +515,16 @@ func applyOAuthClientCredentials{{pascalCase .Name}}(ctx context.Context, req *h
 {{end}}
 {{end}}
 
-{{range .Ops}}{{if .AuthRequired}}
+{{range .Ops}}{{if .AuthRequired}}{{$method := .Method}}{{$path := .Path}}
 // applyAuthFor{{.GoName}} evaluates the OpenAPI security requirement for this
 // operation. Outer alternatives are OR; schemes within an alternative are AND.
 // If no complete alternative has credentials, no upstream request is made.
 func applyAuthFor{{.GoName}}(ctx context.Context, req *http.Request, cfg *runtime.Config) error {
 {{range .Security}}
 	if {{range $index, $scheme := .}}{{if $index}} && {{end}}hasAuth{{pascalCase $scheme.Name}}(cfg){{end}} {
+		if !cfg.AllowInsecureAuth && (req.URL == nil || req.URL.Scheme != "https") {
+			return fmt.Errorf("authenticated operation {{$method}} {{$path}} requires an HTTPS upstream URL")
+		}
 		{{range .}}if err := applyAuth{{pascalCase .Name}}(ctx, req, cfg{{if eq (printf "%s" .Kind) "oauth2"}}, {{oauthScopesLit .OAuthRequestScopes}}{{end}}); err != nil {
 			return err
 		}

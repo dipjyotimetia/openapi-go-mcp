@@ -119,6 +119,34 @@ func TestToMCPResult_EmbeddedResource(t *testing.T) {
 	}
 }
 
+func TestToMCPResult_EmbeddedResourceWireShape(t *testing.T) {
+	raw := []byte("%PDF")
+	encoded, err := json.Marshal(toMCPResult(runtime.NewToolResultResource(raw, "application/pdf")))
+	if err != nil {
+		t.Fatalf("marshal tool result: %v", err)
+	}
+	var wire struct {
+		Content []struct {
+			Type     string `json:"type"`
+			Resource struct {
+				URI      string `json:"uri"`
+				MIMEType string `json:"mimeType"`
+				Blob     string `json:"blob"`
+			} `json:"resource"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("unmarshal wire result: %v", err)
+	}
+	if len(wire.Content) != 1 || wire.Content[0].Type != "resource" {
+		t.Fatalf("unexpected resource wire envelope: %s", encoded)
+	}
+	resource := wire.Content[0].Resource
+	if resource.URI == "" || resource.MIMEType != "application/pdf" || resource.Blob != base64.StdEncoding.EncodeToString(raw) {
+		t.Errorf("unexpected embedded resource wire content: %+v", resource)
+	}
+}
+
 func TestToMCPResult_TextUnchanged(t *testing.T) {
 	res := toMCPResult(runtime.NewToolResultText("hi"))
 	txt, ok := res.Content[0].(mcp.TextContent)

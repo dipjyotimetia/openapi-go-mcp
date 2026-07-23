@@ -250,7 +250,7 @@ paths:
 		req.Header.Set("X-Workload-Identity", "signed")
 		return nil
 	})
-	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client(), RequestAuthProvider: provider}); err != nil {
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client(), RequestAuthProvider: provider, AllowInsecureAuth: true}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 	result, err := server.handlers["readIdentity"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{}})
@@ -370,7 +370,7 @@ paths:
 
 func TestRegister_UsesOpenAPIParameterSerialization(t *testing.T) {
 	var gotPath, gotQuery string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.EscapedPath(), r.URL.RawQuery
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -437,7 +437,7 @@ func TestRegister_RemoteSourceUsesConfiguredUpstreamClientAndBaseURL(t *testing.
 	t.Parallel()
 
 	upstreamCalled := false
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalled = true
 		if r.URL.Path != "/widgets" {
 			t.Errorf("path = %q, want /widgets", r.URL.Path)

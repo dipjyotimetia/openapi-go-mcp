@@ -27,3 +27,17 @@ func TestHasClientCredentialsFlow(t *testing.T) {
 		t.Fatal("pre-acquired OAuth token was treated as a client-credentials flow")
 	}
 }
+
+func TestRejectExternalReferencesFollowsYAMLAliases(t *testing.T) {
+	err := rejectExternalReferences([]byte(`external: &external https://metadata.example/openapi.yaml
+paths:
+  /things:
+    get:
+      responses:
+        "200":
+          $ref: *external
+`))
+	if err == nil {
+		t.Fatal("external $ref hidden behind YAML alias was accepted")
+	}
+}

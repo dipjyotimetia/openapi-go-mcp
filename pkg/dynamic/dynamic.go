@@ -39,7 +39,8 @@ import (
 
 // Config controls dynamic registration.
 //
-// SourceHTTPClient is used only to download an HTTPS OpenAPI document.
+// The source is deployment-owned, trusted configuration, not an end-user
+// input. SourceHTTPClient is used only to download an HTTPS OpenAPI document.
 // UpstreamHTTPClient is used only for requests made by registered tools. The
 // two clients are deliberately separate: a transport trusted to reach a
 // private API must never be used to fetch a remotely supplied document.
@@ -54,6 +55,9 @@ type Config struct {
 	BaseURL            string
 	NamePrefix         string
 	RequestTimeout     time.Duration
+	// AllowInsecureAuth permits authenticated calls to a local HTTP upstream.
+	// The default requires HTTPS whenever an operation applies credentials.
+	AllowInsecureAuth bool
 	// MaxResponseBytes limits upstream response buffering. Zero uses the
 	// runtime default, which is bounded for production safety.
 	MaxResponseBytes int64
@@ -72,8 +76,10 @@ type Config struct {
 
 // Register loads source, collects the proxy-mode operations, and registers
 // every included operation with server. source must be a local path or HTTPS
-// URL. Registration is deliberately startup-only: the spec is read and every
-// input validator is prepared once, before the server starts serving tools.
+// URL. A remote source must come from trusted deployment configuration;
+// transport checks cannot make an arbitrary user-provided URL SSRF-safe.
+// Registration is deliberately startup-only: the spec is read and every input
+// validator is prepared once, before the server starts serving tools.
 func Register(ctx context.Context, server runtime.MCPServer, source string, cfg Config) error {
 	if server == nil {
 		return fmt.Errorf("dynamic registration requires an MCP server")
@@ -102,9 +108,11 @@ func Register(ctx context.Context, server runtime.MCPServer, source string, cfg 
 	if client == nil {
 		client = http.DefaultClient
 	}
+	client = runtime.HTTPClientWithoutRedirects(client)
 	toolConfig := &runtime.Config{NamePrefix: cfg.NamePrefix}
+	oauthStates := newOAuthCredentialStates(ops)
 	for _, op := range ops {
-		registerOperation(server, op, baseURL, serverVariables, client, cfg.RequestTimeout, cfg.MaxResponseBytes, toolConfig, cfg.Provider, cfg.RequestAuthProvider, mtlsConfigured)
+		registerOperation(server, op, baseURL, serverVariables, client, cfg.RequestTimeout, cfg.MaxResponseBytes, toolConfig, cfg.Provider, cfg.RequestAuthProvider, mtlsConfigured, cfg.AllowInsecureAuth, oauthStates)
 	}
 	return nil
 }
@@ -202,10 +210,14 @@ func rejectExternalReferences(raw []byte) error {
 }
 
 func walkYAMLNode(node *yaml.Node) error {
+	node = dereferenceAlias(node)
+	if node == nil {
+		return nil
+	}
 	if node.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(node.Content); i += 2 {
-			key, value := node.Content[i], node.Content[i+1]
-			if key.Value == "$ref" && value.Kind == yaml.ScalarNode && !strings.HasPrefix(value.Value, "#") {
+			key, value := dereferenceAlias(node.Content[i]), dereferenceAlias(node.Content[i+1])
+			if key != nil && value != nil && key.Value == "$ref" && (value.Kind != yaml.ScalarNode || !strings.HasPrefix(value.Value, "#")) {
 				return fmt.Errorf("remote OpenAPI source contains external $ref %q; save the fully bundled spec locally", value.Value)
 			}
 			if err := walkYAMLNode(value); err != nil {
@@ -220,6 +232,13 @@ func walkYAMLNode(node *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+func dereferenceAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
 }
 
 func sourceClientWithoutRedirects(client *http.Client) *http.Client {
@@ -239,7 +258,7 @@ func resolveBaseURL(doc *openapi3.T, cfg Config, remoteSource bool) (string, map
 		for name, value := range cfg.ServerVariables {
 			vars[name] = value
 		}
-		return validateBaseURL(cfg.BaseURL, vars)
+		return validateBaseURL(cfg.BaseURL, vars, remoteSource)
 	}
 	if remoteSource {
 		return "", nil, fmt.Errorf("remote OpenAPI source requires dynamic.Config.BaseURL; refusing document-controlled upstream URL")
@@ -262,16 +281,19 @@ func resolveBaseURL(doc *openapi3.T, cfg Config, remoteSource bool) (string, map
 	if strings.Contains(resolved, "{") {
 		return "", nil, fmt.Errorf("OpenAPI server URL %q has an unresolved variable", doc.Servers[0].URL)
 	}
-	return validateBaseURL(resolved, vars)
+	return validateBaseURL(resolved, vars, false)
 }
 
-func validateBaseURL(baseURL string, vars map[string]string) (string, map[string]string, error) {
+func validateBaseURL(baseURL string, vars map[string]string, requireHTTPS bool) (string, map[string]string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return "", nil, fmt.Errorf("parse dynamic upstream base URL %q: %w", baseURL, err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" {
 		return "", nil, fmt.Errorf("dynamic upstream base URL must be an absolute HTTP(S) URL, got %q", baseURL)
+	}
+	if requireHTTPS && u.Scheme != "https" {
+		return "", nil, fmt.Errorf("remote OpenAPI source requires an HTTPS dynamic upstream base URL")
 	}
 	if u.User != nil {
 		return "", nil, fmt.Errorf("dynamic upstream base URL must not contain credentials")
@@ -282,7 +304,7 @@ func validateBaseURL(baseURL string, vars map[string]string) (string, map[string
 	return baseURL, vars, nil
 }
 
-func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL string, serverVariables map[string]string, client *http.Client, timeout time.Duration, maxResponseBytes int64, toolConfig *runtime.Config, provider runtime.LLMProvider, authProvider runtime.RequestAuthProvider, mtlsConfigured bool) {
+func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL string, serverVariables map[string]string, client *http.Client, timeout time.Duration, maxResponseBytes int64, toolConfig *runtime.Config, provider runtime.LLMProvider, authProvider runtime.RequestAuthProvider, mtlsConfigured, allowInsecureAuth bool, oauthStates map[string]*oauthCredentialState) {
 	tool := runtime.ApplyConfig(runtime.Tool{
 		Name:            op.ToolName,
 		Description:     op.Description,
@@ -291,7 +313,6 @@ func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL
 		Annotations:     op.Annotations,
 	}, toolConfig)
 	validator := runtime.CompileInputValidator(tool.RawInputSchema)
-	oauthStates := newOAuthCredentialStates(op.Security)
 	server.AddTool(tool, func(ctx context.Context, call *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 		if call == nil {
 			return runtime.HandleError(&runtime.ToolError{Status: http.StatusBadRequest, Code: "invalid_arguments", Message: "tool call is nil"})
@@ -308,7 +329,7 @@ func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL
 		if err != nil {
 			return runtime.HandleError(err)
 		}
-		if err := applySecurity(ctx, httpReq, op, authProvider, mtlsConfigured, oauthStates); err != nil {
+		if err := applySecurity(ctx, httpReq, op, authProvider, mtlsConfigured, allowInsecureAuth, oauthStates); err != nil {
 			return runtime.HandleError(err)
 		}
 		response, err := client.Do(httpReq)
@@ -426,13 +447,16 @@ func requestBody(op generator.Operation, args map[string]any) (io.Reader, string
 	}
 }
 
-func applySecurity(ctx context.Context, req *http.Request, op generator.Operation, provider runtime.RequestAuthProvider, mtlsConfigured bool, oauthStates map[string]*oauthCredentialState) error {
+func applySecurity(ctx context.Context, req *http.Request, op generator.Operation, provider runtime.RequestAuthProvider, mtlsConfigured, allowInsecureAuth bool, oauthStates map[string]*oauthCredentialState) error {
 	if !op.AuthRequired {
 		return nil
 	}
 	for _, alternative := range op.Security {
 		if !securityAvailable(alternative, provider, mtlsConfigured) {
 			continue
+		}
+		if !allowInsecureAuth && (req.URL == nil || req.URL.Scheme != "https") {
+			return fmt.Errorf("authenticated operation %s %s requires an HTTPS upstream URL", op.Method, op.Path)
 		}
 		for _, scheme := range alternative {
 			if err := applyScheme(ctx, req, scheme, provider, mtlsConfigured, oauthStates); err != nil {
@@ -447,7 +471,7 @@ func applySecurity(ctx context.Context, req *http.Request, op generator.Operatio
 func securityAvailable(schemes []generator.SecurityScheme, provider runtime.RequestAuthProvider, mtlsConfigured bool) bool {
 	for _, scheme := range schemes {
 		if scheme.Kind == generator.SecurityCustom {
-			if provider == nil {
+			if !runtime.RequestAuthProviderAvailable(provider, scheme.Name) {
 				return false
 			}
 			continue
@@ -487,7 +511,7 @@ func applyScheme(ctx context.Context, req *http.Request, scheme generator.Securi
 		if token := os.Getenv(scheme.EnvVar); token != "" {
 			return runtime.ApplyBearer(req, token)
 		}
-		state := oauthStates[scheme.Name]
+		state := oauthStates[oauthStateKey(scheme)]
 		if state == nil {
 			return &runtime.MissingCredentialError{SchemeName: scheme.Name, EnvVar: scheme.EnvVar}
 		}
@@ -495,7 +519,7 @@ func applyScheme(ctx context.Context, req *http.Request, scheme generator.Securi
 	case generator.SecurityHTTPBasic:
 		return runtime.ApplyBasic(req, os.Getenv(scheme.UsernameEnvVar), os.Getenv(scheme.PasswordEnvVar))
 	case generator.SecurityCustom:
-		return runtime.ApplyRequestAuth(ctx, req, provider)
+		return runtime.ApplyRequestAuthForSecurityScheme(ctx, req, provider, scheme.Name)
 	case generator.SecurityMTLS:
 		if !mtlsConfigured {
 			return fmt.Errorf("mTLS client is not configured for security scheme %s", scheme.Name)
@@ -517,16 +541,22 @@ type oauthCredentialState struct {
 	scopes       string
 }
 
-func newOAuthCredentialStates(alternatives [][]generator.SecurityScheme) map[string]*oauthCredentialState {
+func newOAuthCredentialStates(ops []generator.Operation) map[string]*oauthCredentialState {
 	states := map[string]*oauthCredentialState{}
-	for _, alternative := range alternatives {
-		for _, scheme := range alternative {
-			if scheme.Kind == generator.SecurityOAuth2 && scheme.OAuthTokenURL != "" {
-				states[scheme.Name] = &oauthCredentialState{}
+	for _, op := range ops {
+		for _, alternative := range op.Security {
+			for _, scheme := range alternative {
+				if scheme.Kind == generator.SecurityOAuth2 && scheme.OAuthTokenURL != "" {
+					states[oauthStateKey(scheme)] = &oauthCredentialState{}
+				}
 			}
 		}
 	}
 	return states
+}
+
+func oauthStateKey(scheme generator.SecurityScheme) string {
+	return scheme.Name + "\x00" + strings.Join(scheme.OAuthRequestScopes, " ")
 }
 
 func (state *oauthCredentialState) apply(ctx context.Context, req *http.Request, scheme generator.SecurityScheme) error {

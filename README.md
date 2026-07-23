@@ -147,6 +147,9 @@ openapi-go-mcp [flags]
   -sdk NAME               MCP SDK the proxy scaffold's main.go imports:
                           gosdk (default, modelcontextprotocol/go-sdk) or
                           mark3labs (mark3labs/mcp-go). Ignored in companion mode.
+  -runtime-version VERSION version of openapi-go-mcp to pin in a proxy scaffold.
+                          Released binaries infer it; unversioned development
+                          builds require this flag (or a local runtime replace).
   -name-prefix PREFIX     static prefix added to every tool name
   -openai-compat          emit OpenAI-tool-compatible JSON Schema
   -prefer-content-type CT pick this content type for the request body when an

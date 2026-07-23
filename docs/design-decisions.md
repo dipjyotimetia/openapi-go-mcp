@@ -80,9 +80,9 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 **Cost.** OpenAI users need to know the flag exists. Documented in [`usage-patterns.md`](usage-patterns.md#pattern-7--strict-mode-schema-for-openai-tool-calls) and the README CLI section.
 
-## 6. Request bodies: JSON + form + multipart + raw fallback; responses: JSON only
+## 6. Request bodies and content-aware responses
 
-**Decision.** Request bodies support `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `application/octet-stream`, `text/*`, and any other content type via a raw-string fallback (`application/xml` and friends). When an operation declares more than one, the generator picks deterministically in that priority order. Response bodies still must be JSON-decodable; non-JSON responses are surfaced as raw bytes through `runtime.NewToolResultJSON`.
+**Decision.** Request bodies support `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `application/octet-stream`, `text/*`, and any other content type via a raw-string fallback (`application/xml` and friends). When an operation declares more than one, the generator picks deterministically in that priority order. Responses preserve their media semantics: JSON is structured, text is text, image/audio use native MCP blocks, and generic binary data uses embedded resources.
 
 **Alternative considered.** Keep the original JSON-only stance (the v0.1.0 release shipped this way) and recommend a wrapper service for multipart APIs.
 
@@ -92,7 +92,7 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 - **MCP arguments are still JSON.** Binary fields are accepted as base64-encoded strings; the runtime helper `BuildMultipartBody` decodes them and writes the parts. The complexity is contained in the runtime, not pushed to the LLM.
 - **Fixed priority is deterministic.** No new CLI flag is needed; the priority order is documented in the architecture doc and locked by the unit tests.
 
-**Why responses stay JSON-only.** Response negotiation (Accept headers, content-sniffing, decoding to typed Go) is a separate, larger surface area. `NewToolResultJSON` already passes through raw bytes for non-JSON responses; first-class non-JSON response support is tracked separately.
+**Why response selection remains conservative.** The generator does not invent `Accept` negotiation or typed response decoding; it preserves the upstream response content type through `runtime.NewToolResultFromHTTP` instead.
 
 **Cost.** Multipart bodies with nested binary fields, OpenAPI `encoding[field]` per-part metadata, and a header parameter named `Content-Type` are all known gaps documented in [`architecture.md`](architecture.md#known-limitations). Workaround for nested binary fields: flatten the body schema, or use a wrapper service.
 
@@ -169,7 +169,7 @@ The non-obvious choices made by `openapi-go-mcp`, why they exist, and what they 
 
 ## 13. Dual-mode (companion + proxy) rather than replacing one with the other
 
-**Decision.** Proxy mode (`-mode=proxy`) ships alongside companion mode. Companion mode stays the default; its output is byte-for-byte unchanged (golden test guards it).
+**Decision.** Proxy mode (`-mode=proxy`) ships alongside companion mode. Companion mode stays the default; its deterministic output is golden-test guarded.
 
 **Alternative considered.** Make proxy mode the default and demote companion to opt-in; or replace companion entirely.
 

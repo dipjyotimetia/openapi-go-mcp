@@ -54,6 +54,29 @@ func TestApplyRequestAuth_RejectsNilProvider(t *testing.T) {
 	}
 }
 
+type schemeAuthProvider struct{}
+
+func (schemeAuthProvider) Apply(context.Context, *http.Request) error { return nil }
+func (schemeAuthProvider) SupportsSecurityScheme(name string) bool    { return name == "oidc" }
+func (schemeAuthProvider) ApplyForSecurityScheme(_ context.Context, req *http.Request, name string) error {
+	req.Header.Set("X-Scheme", name)
+	return nil
+}
+
+func TestSchemeRequestAuthProviderSelectsSecurityScheme(t *testing.T) {
+	provider := schemeAuthProvider{}
+	if RequestAuthProviderAvailable(provider, "sigv4") {
+		t.Fatal("unsupported scheme reported available")
+	}
+	req := newReq(t, "https://api.example.com")
+	if err := ApplyRequestAuthForSecurityScheme(context.Background(), req, provider, "oidc"); err != nil {
+		t.Fatalf("ApplyRequestAuthForSecurityScheme: %v", err)
+	}
+	if got := req.Header.Get("X-Scheme"); got != "oidc" {
+		t.Errorf("scheme header = %q", got)
+	}
+}
+
 func TestClientCredentialsProvider_CachesTokenUntilRefreshWindow(t *testing.T) {
 	var requests atomic.Int32
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +194,26 @@ func TestClientCredentialsProvider_RejectsTokenRedirect(t *testing.T) {
 	}
 	if redirected.Load() {
 		t.Fatal("token redirect was followed")
+	}
+}
+
+func TestHTTPClientWithoutRedirectsStopsRedirects(t *testing.T) {
+	reached := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/target", http.StatusFound)
+			return
+		}
+		reached = true
+	}))
+	defer server.Close()
+	response, err := HTTPClientWithoutRedirects(server.Client()).Get(server.URL + "/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusFound || reached {
+		t.Fatalf("status=%d reached=%v", response.StatusCode, reached)
 	}
 }
 

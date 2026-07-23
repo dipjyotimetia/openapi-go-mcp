@@ -181,7 +181,8 @@ func TestSerializeProxyParam_LabelAndDelimitedObjects(t *testing.T) {
 		spec ProxyParamSpec
 		want string
 	}{
-		{"label array", ProxyParamSpec{Name: "label", In: "path", Style: "label"}, ".blue.black"},
+		{"label array", ProxyParamSpec{Name: "label", In: "path", Style: "label"}, ".blue,black"},
+		{"label exploded array", ProxyParamSpec{Name: "label", In: "path", Style: "label", Explode: true}, ".blue.black"},
 		{"label object", ProxyParamSpec{Name: "object", In: "path", Style: "label"}, ".G.200.R.100"},
 		{"space object", ProxyParamSpec{Name: "space", In: "query", Style: "spaceDelimited"}, "space=G%20200%20R%20100"},
 		{"pipe object", ProxyParamSpec{Name: "pipe", In: "query", Style: "pipeDelimited"}, "pipe=G%7C200%7CR%7C100"},

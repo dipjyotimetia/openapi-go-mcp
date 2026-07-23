@@ -38,7 +38,7 @@ func TestRender_DefaultMode_EmitsProviderRegistrationAndBothInputSchemas(t *test
 		"runtime.LLMProviderStandard",
 		"runtime.LLMProviderOpenAI",
 		"const input_openai_",
-		"RawInputSchema: inputSchemaForProvider(provider, input_",
+		"inputSchemaForProvider(provider, input_",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("generated source missing %q\n%s", want, prefix(src, 3000))
@@ -65,7 +65,7 @@ func TestRender_ProxyMode_EmitsProviderRegistration(t *testing.T) {
 	for _, want := range []string{
 		"func " + registerFunc + "OpenAI(s runtime.MCPServer, opts ...runtime.Option)",
 		"func " + registerFunc + "WithProvider(s runtime.MCPServer, provider runtime.LLMProvider, opts ...runtime.Option)",
-		"RawInputSchema: inputSchemaForProvider(provider, input_",
+		"inputSchemaForProvider(provider, input_",
 		"const input_openai_",
 	} {
 		if !strings.Contains(string(src), want) {

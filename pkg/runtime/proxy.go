@@ -243,7 +243,11 @@ func serializeSimple(v any, explode bool) string {
 
 func serializeLabel(v any, explode bool) string {
 	if items, ok := proxyArray(v); ok {
-		return "." + strings.Join(items, ".")
+		separator := ","
+		if explode {
+			separator = "."
+		}
+		return "." + strings.Join(items, separator)
 	}
 	if fields, ok := proxyObject(v); ok {
 		if explode {
@@ -440,7 +444,11 @@ func serializePathParam(v any, spec ProxyParamSpec) string {
 		case "simple":
 			return strings.Join(items, ",")
 		case "label":
-			return "." + strings.Join(items, ".")
+			separator := ","
+			if spec.Explode {
+				separator = "."
+			}
+			return "." + strings.Join(items, separator)
 		case "matrix":
 			if len(items) == 0 {
 				return ";" + name
