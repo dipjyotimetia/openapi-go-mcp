@@ -91,3 +91,16 @@ Request bodies support `application/json`, `application/x-www-form-urlencoded`, 
 - The golden test (`pkg/generator/golden_test.go`) guards generator output format. Any generator change must either preserve the golden or update it with `UPDATE_GOLDEN=1` and a reviewed diff.
 - Update `docs/changelog.md` under `## Unreleased` for user-visible changes.
 - The runtime package has a `Tool`/`MCPServer`/`Config` shape adapted from `redpanda-data/protoc-gen-go-mcp` (Apache-2.0) — keep the attribution comment intact when editing those files.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository has a generated `openwiki/` evidence index. It is optional just-in-time context, not required startup reading.
+
+- Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
+- Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->
