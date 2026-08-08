@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Proxy scaffold SDK pins track the current dependencies.** Generated proxy modules now use `modelcontextprotocol/go-sdk v1.7.0` and `mark3labs/mcp-go v0.57.0`, matching the versions this generator tests.
+
 ### Added — v1 production hardening
 
 - **Provider-aware proxy schemas and strict OpenAI compatibility.** Generated proxy packages now expose standard, OpenAI, and provider-selecting registration entry points. The OpenAI surface follows strict-schema requirements recursively: object properties are all listed in `required`, OpenAPI-optional fields are nullable, and objects reject unspecified properties.

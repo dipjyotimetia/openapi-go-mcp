@@ -166,7 +166,7 @@ func TestParseSecuritySchemes_OAuth2ClientCredentials(t *testing.T) {
 	doc := docWithSchemes(openapi3.SecuritySchemes{
 		"service": schemeRef(&openapi3.SecurityScheme{Type: "oauth2", Flows: &openapi3.OAuthFlows{ClientCredentials: &openapi3.OAuthFlow{
 			TokenURL: "https://issuer.example/token",
-			Scopes:   openapi3.StringMap[string]{"write": "Write", "read": "Read"},
+			Scopes:   map[string]string{"write": "Write", "read": "Read"},
 		}}}),
 	})
 	got := ParseSecuritySchemes(doc, newDiagSink(&bytes.Buffer{}))
