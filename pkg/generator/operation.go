@@ -358,8 +358,14 @@ var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
 func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, path string, conv *SchemaConverter, opts Options, sink *diagSink) (Operation, error) {
 	goName := goMethodName(op.OperationID, method, path)
+	toolName := ToolName(op.OperationID, method, path)
+	if override, ok, err := ToolNameOverride(op.Extensions); err != nil {
+		return Operation{}, err
+	} else if ok {
+		toolName = override
+	}
 	out := Operation{
-		ToolName:    ToolName(op.OperationID, method, path),
+		ToolName:    toolName,
 		GoName:      goName,
 		CallMethod:  goName,
 		Description: chooseDescription(op),
@@ -1029,8 +1035,22 @@ func walkMultipartProperties(node map[string]any, prefix string, encoding openap
 			*parts = append(*parts, part)
 			continue
 		}
-		// Recurse into nested objects. Arrays / oneOf branches are not walked
-		// for binary content in v1.
+		if items, ok := sub["items"].(map[string]any); ok && isBinaryStringLeaf(items) {
+			delete(items, "format")
+			items["contentEncoding"] = "base64"
+			if _, has := items["description"]; !has {
+				items["description"] = "base64-encoded binary"
+			}
+			part := RequestFilePart{Path: path, Repeated: true}
+			if prefix == "" {
+				if enc, ok := encoding[name]; ok && enc != nil {
+					part.ContentType = enc.ContentType
+				}
+			}
+			*parts = append(*parts, part)
+			continue
+		}
+		// Recurse into nested objects. oneOf branches are not walked.
 		if typeIs(sub, "object") || sub["properties"] != nil {
 			walkMultipartProperties(sub, path, encoding, parts)
 		}

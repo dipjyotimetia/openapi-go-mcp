@@ -708,6 +708,9 @@ func fileFieldsLit(parts []RequestFilePart) string {
 			b.WriteString(", ContentType: ")
 			b.WriteString(strconv.Quote(p.ContentType))
 		}
+		if p.Repeated {
+			b.WriteString(", Repeated: true")
+		}
 		b.WriteString("}")
 	}
 	b.WriteString("}")

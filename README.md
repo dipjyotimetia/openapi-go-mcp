@@ -18,6 +18,7 @@ Generate a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) serve
 - **OpenAI compatibility mode** — `-openai-compat` flag emits a flattened, `$ref`-free schema suitable for OpenAI's strict tool-call schema validator.
 - **Multi-spec batch generation** — `-spec` accepts a directory (recursive walk), glob pattern, or comma-separated list of any of those. Each matched spec is rendered into its own `<slug>mcp/` subdirectory under `-out`, with `PackageName` and `ClientImport` auto-derived from the filename stem.
 - **Curated exposure with `x-mcp`** — spec authors can opt operations, path-items, or the whole document in or out of MCP tool generation; pair with `-exclude-by-default` for opt-in-only specs.
+- **Stable tool names** — an operation-level `x-mcp-tool-name` publishes a portable, human-chosen MCP tool name independent of its OpenAPI `operationId`.
 - **Runtime options** — `WithNamePrefix` (namespace tools when the same API is registered multiple times), `WithExtraProperties` (inject per-call context such as base URL or auth token).
 
 ## Install
@@ -190,6 +191,16 @@ paths:
 Pair with `-exclude-by-default` when only a small curated subset of a large
 spec should be exposed: nothing is generated unless `x-mcp: true` appears
 explicitly.
+
+Use `x-mcp-tool-name` on an operation when its public MCP name must remain
+stable across OpenAPI refactors. Values must match
+`^[a-z_][a-z0-9_-]{0,63}$`; invalid or duplicate names fail generation.
+
+```yaml
+get:
+  operationId: GetEquityResearchReport
+  x-mcp-tool-name: get_equity_research_report
+```
 
 ### Generating from many specs in one invocation
 

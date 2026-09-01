@@ -130,6 +130,20 @@ func TestRender_BodyMultipart_NestedBinary(t *testing.T) {
 	}
 }
 
+func TestRewriteMultipartBinaryFields_RepeatedBinaryArray(t *testing.T) {
+	root := map[string]any{"properties": map[string]any{
+		"attachments": map[string]any{"type": "array", "items": map[string]any{"type": "string", "format": "binary"}},
+	}}
+	parts := rewriteMultipartBinaryFields(root, nil)
+	if len(parts) != 1 || parts[0].Path != "/attachments" || !parts[0].Repeated {
+		t.Fatalf("parts = %+v", parts)
+	}
+	items := root["properties"].(map[string]any)["attachments"].(map[string]any)["items"].(map[string]any)
+	if items["contentEncoding"] != "base64" || items["format"] != nil {
+		t.Errorf("items schema = %#v", items)
+	}
+}
+
 func TestRender_BodyOctet(t *testing.T) {
 	src := renderNonJSONFixture(t)
 

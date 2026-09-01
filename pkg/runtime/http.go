@@ -164,6 +164,9 @@ type RequestFilePart struct {
 	// ContentType overrides the part's Content-Type. When empty, the runtime
 	// uses multipartFilePartContentType.
 	ContentType string
+	// Repeated writes one multipart part for each base64 string in the array
+	// at Path. Every part uses the same multipart field name.
+	Repeated bool
 }
 
 // BuildMultipartBody encodes args["body"] (a JSON object) as a multipart/form-data
@@ -210,7 +213,7 @@ func BuildMultipartBody(args map[string]any, fileFields []RequestFilePart) (stri
 	for _, k := range keys {
 		v := body[k]
 		if fp, isFile := byPath["/"+k]; isFile {
-			if err := writeFilePart(mw, k, v, fp); err != nil {
+			if err := writeFileParts(mw, k, v, fp); err != nil {
 				return "", nil, err
 			}
 			continue
@@ -231,7 +234,7 @@ func BuildMultipartBody(args map[string]any, fileFields []RequestFilePart) (stri
 				if !found {
 					continue
 				}
-				if err := writeFilePart(mw, lastPathSegment(np), val, fp); err != nil {
+				if err := writeFileParts(mw, lastPathSegment(np), val, fp); err != nil {
 					return "", nil, err
 				}
 			}
@@ -250,6 +253,22 @@ func BuildMultipartBody(args map[string]any, fileFields []RequestFilePart) (stri
 		return "", nil, &ToolError{Status: 500, Code: "multipart_close", Message: err.Error()}
 	}
 	return mw.FormDataContentType(), &buf, nil
+}
+
+func writeFileParts(mw *multipart.Writer, name string, v any, fp RequestFilePart) error {
+	if !fp.Repeated {
+		return writeFilePart(mw, name, v, fp)
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return &ToolError{Status: 400, Code: "invalid_body", Message: fmt.Sprintf("file field %q must be an array of base64 strings, got %T", name, v)}
+	}
+	for _, item := range items {
+		if err := writeFilePart(mw, name, item, fp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // splitTopSegment splits a JSON-pointer path "/top/rest…" into top + rest.

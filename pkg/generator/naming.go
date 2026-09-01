@@ -12,13 +12,43 @@ package generator
 
 import (
 	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"unicode"
 )
 
 // MaxToolNameLen is the portable MCP/LLM tool-name length limit.
 const MaxToolNameLen = 64
+
+const xmcpToolNameExtensionKey = "x-mcp-tool-name"
+
+var configuredToolName = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,63}$`)
+
+// ToolNameOverride returns the operation-level x-mcp-tool-name value. Unlike
+// operationId-derived names, explicit names are never sanitised: a spec author
+// has opted into a stable public name, so a typo must stop generation.
+func ToolNameOverride(extensions map[string]any) (string, bool, error) {
+	if extensions == nil {
+		return "", false, nil
+	}
+	raw, ok := extensions[xmcpToolNameExtensionKey]
+	if !ok {
+		return "", false, nil
+	}
+	name, ok := raw.(string)
+	if !ok {
+		if encoded, isRaw := raw.(json.RawMessage); isRaw {
+			_ = json.Unmarshal(encoded, &name)
+		}
+	}
+	if !configuredToolName.MatchString(name) {
+		return "", true, fmt.Errorf("%s must match %s", xmcpToolNameExtensionKey, configuredToolName.String())
+	}
+	return name, true, nil
+}
 
 // MangleHeadIfTooLong truncates name to fit within maxLen, replacing the head
 // with a deterministic base-36 SHA-256 prefix so the most-specific tail is

@@ -13,6 +13,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -88,6 +89,21 @@ func TestNewToolResultBinary(t *testing.T) {
 	}
 }
 
+func TestNewToolResultFromHTTP_SSEProducesEventLog(t *testing.T) {
+	result := NewToolResultFromHTTP(200, http.Header{"Content-Type": []string{"text/event-stream"}}, []byte("event: update\nid: 7\ndata: first\ndata: second\n\n"), "")
+	content, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want event log", result.StructuredContent)
+	}
+	events, ok := content["events"].([]map[string]any)
+	if !ok || len(events) != 1 {
+		t.Fatalf("events = %#v", content["events"])
+	}
+	if events[0]["event"] != "update" || events[0]["id"] != "7" || events[0]["data"] != "first\nsecond" {
+		t.Errorf("event = %#v", events[0])
+	}
+}
+
 func TestApplyConfig_NamePrefix(t *testing.T) {
 	tool := Tool{Name: "getPet", RawInputSchema: []byte(`{"type":"object"}`)}
 	cfg := NewConfig()
@@ -95,6 +111,21 @@ func TestApplyConfig_NamePrefix(t *testing.T) {
 	got := ApplyConfig(tool, cfg)
 	if got.Name != "v1_getPet" {
 		t.Fatalf("got %q", got.Name)
+	}
+}
+
+func TestApplyConfig_NamePrefixKeepsPortableLength(t *testing.T) {
+	tool := Tool{Name: strings.Repeat("a", 60), RawInputSchema: []byte(`{"type":"object"}`)}
+	got := ApplyConfig(tool, &Config{NamePrefix: "production"})
+	if len(got.Name) > 64 || got.Name[0] < 'A' || got.Name[0] > 'z' {
+		t.Fatalf("prefixed name is not portable: %q", got.Name)
+	}
+}
+
+func TestApplyConfig_NamePrefixNormalizesInvalidCharacters(t *testing.T) {
+	got := ApplyConfig(Tool{Name: "getPet"}, &Config{NamePrefix: "1 prod"})
+	if got.Name != "t_1_prod_getPet" {
+		t.Fatalf("Name = %q", got.Name)
 	}
 }
 
@@ -211,6 +242,32 @@ func TestBuildMultipartBody_FileField(t *testing.T) {
 	}
 	if got := parts["attachment"]; got != string(fileBytes) {
 		t.Fatalf("attachment part: got % x", got)
+	}
+}
+
+func TestBuildMultipartBody_RepeatedFileField(t *testing.T) {
+	args := map[string]any{"body": map[string]any{"attachments": []any{
+		base64.StdEncoding.EncodeToString([]byte("first")),
+		base64.StdEncoding.EncodeToString([]byte("second")),
+	}}}
+	contentType, body, err := BuildMultipartBody(args, []RequestFilePart{{Path: "/attachments", Repeated: true}})
+	if err != nil {
+		t.Fatalf("BuildMultipartBody: %v", err)
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		t.Fatalf("ParseMediaType: %v", err)
+	}
+	mr := multipart.NewReader(body, params["boundary"])
+	for _, want := range []string{"first", "second"} {
+		part, err := mr.NextPart()
+		if err != nil {
+			t.Fatalf("NextPart: %v", err)
+		}
+		got, _ := io.ReadAll(part)
+		if part.FormName() != "attachments" || string(got) != want {
+			t.Fatalf("part = %q %q, want attachments %q", part.FormName(), got, want)
+		}
 	}
 }
 

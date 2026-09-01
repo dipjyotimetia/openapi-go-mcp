@@ -257,6 +257,18 @@ openapi-go-mcp -force -spec billing.yaml \
 catches accidental regenerations that would clobber hand-edited or already
 committed output.
 
+When an MCP tool name is part of a published client contract, set an
+operation-level `x-mcp-tool-name` instead of relying on `operationId`:
+
+```yaml
+get:
+  operationId: GetEquityResearchReport
+  x-mcp-tool-name: get_equity_research_report
+```
+
+The value must match `^[a-z_][a-z0-9_-]{0,63}$`. Invalid or duplicate names
+fail generation, so a refactor cannot silently rename a public tool.
+
 ## Pattern 12 — Batch generation across many specs
 
 A monorepo with one spec per service (or a fan-out integration that touches
