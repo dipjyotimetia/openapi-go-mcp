@@ -12,9 +12,12 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -169,12 +172,40 @@ func ApplyConfig(tool Tool, cfg *Config) Tool {
 		return tool
 	}
 	if cfg.NamePrefix != "" {
-		tool.Name = cfg.NamePrefix + "_" + tool.Name
+		tool.Name = portableToolName(cfg.NamePrefix + "_" + tool.Name)
 	}
 	if len(cfg.ExtraProperties) > 0 {
 		tool = AddExtraPropertiesToTool(tool, cfg.ExtraProperties)
 	}
 	return tool
+}
+
+// portableToolName keeps runtime-composed names within the strictest common
+// provider limit without changing ordinary names. The hash protects distinct
+// long names while the tail keeps the operation recognizable.
+func portableToolName(name string) string {
+	var clean strings.Builder
+	for _, r := range name {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			clean.WriteRune(r)
+		} else {
+			clean.WriteByte('_')
+		}
+	}
+	name = clean.String()
+	if name == "" || !isASCIILetter(name[0]) {
+		name = "t_" + name
+	}
+	if len(name) <= 64 {
+		return name
+	}
+	digest := sha256.Sum256([]byte(name))
+	prefix := "t" + fmt.Sprintf("%x", digest[:])[:9]
+	return prefix + "_" + name[len(name)-(64-len(prefix)-1):]
+}
+
+func isASCIILetter(b byte) bool {
+	return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z'
 }
 
 // AddExtraPropertiesToTool modifies a tool's schema to include the given

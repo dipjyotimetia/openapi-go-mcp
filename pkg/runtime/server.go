@@ -265,6 +265,14 @@ func NewToolResultFromHTTP(status int, header http.Header, body []byte, fallback
 				StatusCode:        status,
 				Headers:           headers,
 			}
+		case ctEventStream:
+			events := parseSSEEvents(string(body))
+			return &CallToolResult{
+				Text:              fmt.Sprintf("received %d server-sent event(s)", len(events)),
+				StructuredContent: map[string]any{"contentType": "text/event-stream", "events": events},
+				StatusCode:        status,
+				Headers:           headers,
+			}
 		case ctImage, ctAudio:
 			kind := MediaImage
 			if class == ctAudio {
@@ -397,6 +405,7 @@ const (
 	ctOther contentClass = iota
 	ctJSON
 	ctText
+	ctEventStream
 	ctImage
 	ctAudio
 )
@@ -425,6 +434,8 @@ func classifyContentType(ct string) (contentClass, string) {
 	switch {
 	case mediaType == "application/json", strings.HasSuffix(mediaType, "+json"):
 		return ctJSON, mediaType
+	case mediaType == "text/event-stream":
+		return ctEventStream, mediaType
 	case strings.HasPrefix(mediaType, "text/"):
 		return ctText, mediaType
 	case strings.HasPrefix(mediaType, "image/"):
@@ -433,4 +444,50 @@ func classifyContentType(ct string) (contentClass, string) {
 		return ctAudio, mediaType
 	}
 	return ctOther, mediaType
+}
+
+// parseSSEEvents preserves the portable SSE fields after a bounded upstream
+// response has completed. It deliberately does not attempt live MCP partial
+// results, which are not portable across the supported server SDKs.
+func parseSSEEvents(body string) []map[string]any {
+	var events []map[string]any
+	current := map[string]any{}
+	data := []string{}
+	flush := func() {
+		if len(current) == 0 && len(data) == 0 {
+			return
+		}
+		if len(data) > 0 {
+			current["data"] = strings.Join(data, "\n")
+		}
+		if _, ok := current["event"]; !ok {
+			current["event"] = "message"
+		}
+		events = append(events, current)
+		current, data = map[string]any{}, nil
+	}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" {
+			flush()
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		field, value, found := strings.Cut(line, ":")
+		if found {
+			value = strings.TrimPrefix(value, " ")
+		}
+		switch field {
+		case "data":
+			data = append(data, value)
+		case "event", "id":
+			current[field] = value
+		case "retry":
+			current[field] = value
+		}
+	}
+	flush()
+	return events
 }

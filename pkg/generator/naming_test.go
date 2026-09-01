@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 var portableToolName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
@@ -153,6 +155,30 @@ func TestToolName_LeavesAlreadyPortableNameStable(t *testing.T) {
 	const name = "get-pet_v1"
 	if got := ToolName(name, "", ""); got != name {
 		t.Errorf("ToolName(%q) = %q, want unchanged", name, got)
+	}
+}
+
+func TestCollectOperations_UsesXMCPToolNameOverride(t *testing.T) {
+	doc := docWith(t, "/pets", func(op *openapi3.Operation, _ *openapi3.PathItem) {
+		op.OperationID = "generatedName"
+		op.Extensions = map[string]any{"x-mcp-tool-name": "list_pets"}
+	})
+
+	ops, _, err := CollectOperations(doc, Options{ClientImport: "example.com/client"})
+	if err != nil {
+		t.Fatalf("CollectOperations: %v", err)
+	}
+	if got := ops[0].ToolName; got != "list_pets" {
+		t.Errorf("ToolName = %q, want override list_pets", got)
+	}
+}
+
+func TestCollectOperations_RejectsInvalidXMCPToolNameOverride(t *testing.T) {
+	doc := docWith(t, "/pets", func(op *openapi3.Operation, _ *openapi3.PathItem) {
+		op.Extensions = map[string]any{"x-mcp-tool-name": "Invalid Name"}
+	})
+	if _, _, err := CollectOperations(doc, Options{ClientImport: "example.com/client"}); err == nil {
+		t.Fatal("CollectOperations accepted an invalid x-mcp-tool-name")
 	}
 }
 

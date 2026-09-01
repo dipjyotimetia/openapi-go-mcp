@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Stable `x-mcp-tool-name` overrides.** Operations can publish validated, portable MCP tool names independent of `operationId`; invalid or duplicate names stop generation.
+- **SSE final event logs.** Successful `text/event-stream` responses are surfaced as ordered structured events after the bounded upstream response completes, consistently across both SDK adapters.
+- **Repeated multipart binary fields.** Arrays of `format: binary` items now emit one multipart part per base64 value, including nested-object arrays.
+
 ### Fixed
 
 - **Proxy scaffold SDK pins track the current dependencies.** Generated proxy modules now use `modelcontextprotocol/go-sdk v1.7.0` and `mark3labs/mcp-go v0.57.0`, matching the versions this generator tests.
