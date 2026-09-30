@@ -67,7 +67,10 @@ func TestMain(m *testing.M) {
 	}
 
 	cliPath = filepath.Join(dir, "openapi-go-mcp")
-	cmd := exec.Command("go", "build", "-o", cliPath, "./cmd/openapi-go-mcp")
+	// A fixed version keeps proxy scaffolds generatable from a dirty tree,
+	// whose "+dirty" build version the CLI refuses to pin. Scaffolds built
+	// by these tests replace the runtime with the repo checkout anyway.
+	cmd := exec.Command("go", "build", "-ldflags", "-X main.version=v0.0.0-e2e", "-o", cliPath, "./cmd/openapi-go-mcp")
 	root, err := findRepoRoot()
 	if err != nil {
 		_ = os.RemoveAll(dir)

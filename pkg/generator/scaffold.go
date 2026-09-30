@@ -37,8 +37,8 @@ var mcpSDKDeps = map[string]struct {
 	Module  string
 	Version string
 }{
-	"gosdk":     {Module: "github.com/modelcontextprotocol/go-sdk", Version: "v1.7.0"},
-	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v0.58.0"},
+	"gosdk":     {Module: "github.com/modelcontextprotocol/go-sdk", Version: "v1.8.0"},
+	"mark3labs": {Module: "github.com/mark3labs/mcp-go", Version: "v1.1.1"},
 }
 
 // ScaffoldOverrides lets callers (mainly tests) tweak fields the generator
@@ -201,7 +201,9 @@ func runtimeVersionForScaffold(ov ScaffoldOverrides, buildVersion string) (strin
 		}
 		return ov.RuntimeVersion, nil
 	}
-	if moduleVersionRE.MatchString(buildVersion) {
+	// A "+dirty" build carries local changes that no module version contains;
+	// Go strips the suffix and would silently resolve the clean commit.
+	if moduleVersionRE.MatchString(buildVersion) && !strings.HasSuffix(buildVersion, "+dirty") {
 		return buildVersion, nil
 	}
 	if ov.RuntimeReplace != "" {
@@ -209,7 +211,7 @@ func runtimeVersionForScaffold(ov ScaffoldOverrides, buildVersion string) (strin
 		// valid placeholder is never resolved through a module proxy.
 		return "v0.0.0", nil
 	}
-	return "", fmt.Errorf("scaffold: runtime version is unavailable from this development build; supply ScaffoldOverrides.RuntimeVersion or RuntimeReplace")
+	return "", fmt.Errorf("scaffold: runtime version is unavailable from this development build; supply -runtime-version (ScaffoldOverrides.RuntimeVersion) or RuntimeReplace")
 }
 
 // renderScaffoldGoMod emits the go.mod declaration. The require block is

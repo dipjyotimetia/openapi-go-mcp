@@ -72,6 +72,9 @@ type Config struct {
 	// RequestAuthProvider supplies deployment-specific OIDC/SigV4-style
 	// request signing for operations that declare custom security schemes.
 	RequestAuthProvider runtime.RequestAuthProvider
+	// Warnings receives non-fatal spec diagnostics. Nil discards them so the
+	// library does not write to process stderr.
+	Warnings io.Writer
 }
 
 // Register loads source, collects the proxy-mode operations, and registers
@@ -92,7 +95,11 @@ func Register(ctx context.Context, server runtime.MCPServer, source string, cfg 
 	if err != nil {
 		return fmt.Errorf("load OpenAPI source: %w", err)
 	}
-	ops, _, err := generator.CollectOperations(doc, generator.Options{Mode: generator.ModeProxy})
+	warnings := cfg.Warnings
+	if warnings == nil {
+		warnings = io.Discard
+	}
+	ops, _, err := generator.CollectOperations(doc, generator.Options{Mode: generator.ModeProxy, Warnings: warnings})
 	if err != nil {
 		return fmt.Errorf("collect OpenAPI operations: %w", err)
 	}
@@ -103,18 +110,45 @@ func Register(ctx context.Context, server runtime.MCPServer, source string, cfg 
 	if err != nil {
 		return err
 	}
-	mtlsConfigured := cfg.MTLSConfigured
 	client := cfg.UpstreamHTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
-	client = runtime.HTTPClientWithoutRedirects(client)
-	toolConfig := &runtime.Config{NamePrefix: cfg.NamePrefix}
-	oauthStates := newOAuthCredentialStates(ops)
+	reg := &registration{
+		baseURL:           baseURL,
+		serverVariables:   serverVariables,
+		client:            runtime.HTTPClientWithoutRedirects(client),
+		timeout:           cfg.RequestTimeout,
+		maxResponseBytes:  cfg.MaxResponseBytes,
+		toolConfig:        &runtime.Config{NamePrefix: cfg.NamePrefix},
+		provider:          cfg.Provider,
+		authProvider:      cfg.RequestAuthProvider,
+		mtlsConfigured:    cfg.MTLSConfigured,
+		allowInsecureAuth: cfg.AllowInsecureAuth,
+		oauthStates:       newOAuthCredentialStates(ops),
+		warnings:          warnings,
+	}
 	for _, op := range ops {
-		registerOperation(server, op, baseURL, serverVariables, client, cfg.RequestTimeout, cfg.MaxResponseBytes, toolConfig, cfg.Provider, cfg.RequestAuthProvider, mtlsConfigured, cfg.AllowInsecureAuth, oauthStates)
+		registerOperation(server, op, reg)
 	}
 	return nil
+}
+
+// registration holds the settings Register resolves once and every
+// registered tool shares.
+type registration struct {
+	baseURL           string
+	serverVariables   map[string]string
+	client            *http.Client
+	timeout           time.Duration
+	maxResponseBytes  int64
+	toolConfig        *runtime.Config
+	provider          runtime.LLMProvider
+	authProvider      runtime.RequestAuthProvider
+	mtlsConfigured    bool
+	allowInsecureAuth bool
+	oauthStates       map[string]*oauthCredentialState
+	warnings          io.Writer
 }
 
 func validateSource(source string) (bool, error) {
@@ -304,15 +338,20 @@ func validateBaseURL(baseURL string, vars map[string]string, requireHTTPS bool) 
 	return baseURL, vars, nil
 }
 
-func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL string, serverVariables map[string]string, client *http.Client, timeout time.Duration, maxResponseBytes int64, toolConfig *runtime.Config, provider runtime.LLMProvider, authProvider runtime.RequestAuthProvider, mtlsConfigured, allowInsecureAuth bool, oauthStates map[string]*oauthCredentialState) {
+func registerOperation(server runtime.MCPServer, op generator.Operation, reg *registration) {
 	tool := runtime.ApplyConfig(runtime.Tool{
 		Name:            op.ToolName,
 		Description:     op.Description,
-		RawInputSchema:  inputSchemaForProvider(provider, op.InputSchemaJSON, op.InputSchemaOpenAIJSON),
+		RawInputSchema:  inputSchemaForProvider(reg.provider, op.InputSchemaJSON, op.InputSchemaOpenAIJSON),
 		RawOutputSchema: json.RawMessage(op.OutputSchemaJSON),
 		Annotations:     op.Annotations,
-	}, toolConfig)
+	}, reg.toolConfig)
 	validator := runtime.CompileInputValidator(tool.RawInputSchema)
+	if err := validator.Err(); err != nil {
+		// Not fatal, so one bad operation cannot stop the whole server. The
+		// tool still registers; its calls report invalid_input_schema.
+		_, _ = fmt.Fprintf(reg.warnings, "openapi-go-mcp: warning: tool %s: %v\n", tool.Name, err)
+	}
 	server.AddTool(tool, func(ctx context.Context, call *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
 		if call == nil {
 			return runtime.HandleError(&runtime.ToolError{Status: http.StatusBadRequest, Code: "invalid_arguments", Message: "tool call is nil"})
@@ -320,23 +359,23 @@ func registerOperation(server runtime.MCPServer, op generator.Operation, baseURL
 		if err := validator.Validate(call.Arguments); err != nil {
 			return runtime.HandleError(err)
 		}
-		if timeout > 0 {
+		if reg.timeout > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
+			ctx, cancel = context.WithTimeout(ctx, reg.timeout)
 			defer cancel()
 		}
-		httpReq, err := buildRequest(ctx, op, baseURL, serverVariables, call.Arguments)
+		httpReq, err := buildRequest(ctx, op, reg.baseURL, reg.serverVariables, call.Arguments)
 		if err != nil {
 			return runtime.HandleError(err)
 		}
-		if err := applySecurity(ctx, httpReq, op, authProvider, mtlsConfigured, allowInsecureAuth, oauthStates); err != nil {
+		if err := applySecurity(ctx, httpReq, op, reg.authProvider, reg.mtlsConfigured, reg.allowInsecureAuth, reg.oauthStates); err != nil {
 			return runtime.HandleError(err)
 		}
-		response, err := client.Do(httpReq)
+		response, err := reg.client.Do(httpReq)
 		if err != nil {
 			return runtime.HandleError(runtime.SanitizeUpstreamError(err))
 		}
-		body, err := runtime.ReadResponseBodyLimit(response, maxResponseBytes)
+		body, err := runtime.ReadResponseBodyLimit(response, reg.maxResponseBytes)
 		if err != nil {
 			return runtime.HandleError(err)
 		}

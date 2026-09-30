@@ -14,9 +14,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/batch"
 	"github.com/dipjyotimetia/openapi-go-mcp/pkg/generator"
@@ -130,8 +133,10 @@ func run() int {
 	}
 
 	proxyRuntimeVersion := *runtimeVersion
-	if proxyRuntimeVersion == "" && resolveVersion() != "dev" {
-		proxyRuntimeVersion = resolveVersion()
+	// A "+dirty" build has local changes no published version contains, so it
+	// must not be pinned; the scaffold then asks for -runtime-version.
+	if v := resolveVersion(); proxyRuntimeVersion == "" && v != "dev" && !strings.HasSuffix(v, "+dirty") {
+		proxyRuntimeVersion = v
 	}
 
 	baseOpts := generator.Options{
@@ -148,6 +153,9 @@ func run() int {
 		PreferContentType: *preferCT,
 		ExcludeByDefault:  *excludeDefault,
 		Force:             *force,
+		// printDiagnostics renders the structured list; the generator's
+		// free-form copy would duplicate every line on stderr.
+		Warnings: io.Discard,
 	}
 
 	// Build per-spec plans. Collisions are reported before any file is
@@ -168,7 +176,8 @@ func run() int {
 		}
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	// Pre-flight: companion-mode codegen invocations need -client-import to
 	// dispatch into an oapi-codegen package. Proxy mode does its own HTTP
@@ -185,6 +194,10 @@ func run() int {
 	cwd, _ := os.Getwd() // best-effort; empty cwd just disables relative rendering.
 	exitCode := exitOK
 	for _, plan := range plans {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "openapi-go-mcp: interrupted")
+			return exitGenerate
+		}
 		prefix := displayPath(plan.Ref.Path, cwd)
 		doc, loadErr := loader.Load(ctx, plan.Ref.Path)
 		if loadErr != nil {

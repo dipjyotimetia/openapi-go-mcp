@@ -232,22 +232,11 @@ func CollectOperations(doc *openapi3.T, opts Options) ([]Operation, []Diagnostic
 	nameByPtr := template.NameByPtr()
 
 	paths := doc.Paths.Map()
-	pathKeys := make([]string, 0, len(paths))
-	for path := range paths {
-		pathKeys = append(pathKeys, path)
-	}
-	sort.Strings(pathKeys)
-
 	defaultInclude := !opts.ExcludeByDefault
-	for _, path := range pathKeys {
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
 		item := paths[path]
 		opByMethod := item.Operations()
-		methods := make([]string, 0, len(opByMethod))
-		for m := range opByMethod {
-			methods = append(methods, m)
-		}
-		sort.Strings(methods)
-		for _, method := range methods {
+		for _, method := range slices.Sorted(maps.Keys(opByMethod)) {
 			specOp := opByMethod[method]
 			opPath := fmt.Sprintf("%s %s", method, path)
 			if !resolveXMCPInclusion(doc.Extensions, item.Extensions, specOp.Extensions, defaultInclude, opPath, sink) {
@@ -375,80 +364,10 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 	}
 	opPath := fmt.Sprintf("%s %s", method, path)
 
-	mergedParams := mergeParametersWithShadowWarning(item.Parameters, op.Parameters, opPath, sink)
-	paramByIn := groupParameters(mergedParams)
-	pathGoVar := newGoVarUniquer()
-
-	for _, m := range pathParamRe.FindAllStringSubmatch(path, -1) {
-		name := m[1]
-		p, ok := paramByIn[inPath][name]
-		if !ok {
-			// Spec declared a {param} in the URL template but no matching
-			// parameters[].in=path entry. kin-openapi validation should catch
-			// this earlier; record it as a diagnostic for visibility.
-			sink.warn(DiagMissingPathParam, opPath,
-				fmt.Sprintf("path parameter %q is referenced in the URL but has no parameter definition; treating as a required string", name))
-		}
-		f := paramFieldFromSpec(name, p, true)
-		f.GoVar = pathGoVar(f.GoVar)
-		out.PathParams = append(out.PathParams, f)
-		if p != nil && opts.Mode == ModeProxy {
-			emitParameterStyleDiagnostic(p, opPath, sink)
-		}
-	}
-	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink, opts.Mode == ModeProxy)
-	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink, opts.Mode == ModeProxy)
-	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink, opts.Mode == ModeProxy)
-	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
-
-	if len(op.Callbacks) > 0 {
-		names := make([]string, 0, len(op.Callbacks))
-		for name := range op.Callbacks {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		sink.warn(DiagDroppedCallback, opPath,
-			"callbacks are not modelled as MCP tools; dropped: "+strings.Join(names, ", "))
-	}
-	if op.Security != nil && len(*op.Security) > 0 && opts.Mode != ModeProxy {
-		// Proxy mode wires this automatically from env vars; the diagnostic
-		// would mislead the user into doing redundant manual work.
-		sink.info(DiagDroppedSecurityRequirement, opPath,
-			"per-operation security requirement is informational; supply credentials via runtime.WithExtraProperties / request editor. Schemes: "+strings.Join(dedupSchemeNames(*op.Security), ", "))
-	}
-
-	if op.RequestBody != nil && op.RequestBody.Value != nil {
-		body := op.RequestBody.Value
-		out.RequestBodyRequired = body.Required
-		if len(body.Content) > 0 {
-			kind, ct, schema := pickRequestContent(body.Content, opts.PreferContentType)
-			out.HasRequestBody = true
-			out.RequestBodyKind = kind
-			out.RequestContentType = ct
-			out.CallMethod = callMethodFor(goName, kind)
-			// Typed kinds keep the schema for input-schema lowering and
-			// (multipart) binary-field rewriting. Raw kinds intentionally
-			// drop the spec schema — the MCP input is a single base64 /
-			// plain-text string regardless of what the body looks like on
-			// the wire.
-			switch kind {
-			case BodyJSON, BodyForm, BodyMultipart:
-				out.RequestBody = schema
-			case BodyOctet, BodyText, BodyRaw:
-				out.RequestBody = nil
-			default:
-				return out, fmt.Errorf("unhandled body kind %q for content types %v", kind, contentKeys(body.Content))
-			}
-			if kind == BodyMultipart {
-				if mt := body.Content[ct]; mt != nil {
-					out.requestBodyEncoding = mt.Encoding
-				}
-			}
-			if kind != BodyJSON && hasContentTypeHeaderParam(out.HeaderParams) {
-				sink.warn(DiagContentTypeHeaderOverride, opPath,
-					fmt.Sprintf("Content-Type header parameter is silently overridden by the %s request body", ct))
-			}
-		}
+	collectOperationParams(&out, item, op, opPath, opts, sink)
+	emitOperationDiagnostics(op, opPath, opts, sink)
+	if err := applyRequestBody(&out, op, opPath, opts, sink); err != nil {
+		return out, err
 	}
 
 	pick := pickResponseContent(op.Responses)
@@ -476,6 +395,100 @@ func buildOperation(item *openapi3.PathItem, op *openapi3.Operation, method, pat
 	out.RequestFileFields = fileFields
 	emitNestedMultipartEncodingDiagnostics(fileFields, out.requestBodyEncoding, opPath, sink)
 	return out, nil
+}
+
+// collectOperationParams merges path-item and operation parameters and fills
+// the per-location parameter lists on out. Path parameters follow their order
+// in the URL template; a template variable with no matching definition becomes
+// a required string with a diagnostic.
+func collectOperationParams(out *Operation, item *openapi3.PathItem, op *openapi3.Operation, opPath string, opts Options, sink *diagSink) {
+	mergedParams := mergeParametersWithShadowWarning(item.Parameters, op.Parameters, opPath, sink)
+	paramByIn := groupParameters(mergedParams)
+	pathGoVar := newGoVarUniquer()
+
+	for _, m := range pathParamRe.FindAllStringSubmatch(out.Path, -1) {
+		name := m[1]
+		p, ok := paramByIn[inPath][name]
+		if !ok {
+			// Spec declared a {param} in the URL template but no matching
+			// parameters[].in=path entry. kin-openapi validation should catch
+			// this earlier; record it as a diagnostic for visibility.
+			sink.warn(DiagMissingPathParam, opPath,
+				fmt.Sprintf("path parameter %q is referenced in the URL but has no parameter definition; treating as a required string", name))
+		}
+		f := paramFieldFromSpec(name, p, true)
+		f.GoVar = pathGoVar(f.GoVar)
+		out.PathParams = append(out.PathParams, f)
+		if p != nil && opts.Mode == ModeProxy {
+			emitParameterStyleDiagnostic(p, opPath, sink)
+		}
+	}
+	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink, opts.Mode == ModeProxy)
+	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink, opts.Mode == ModeProxy)
+	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink, opts.Mode == ModeProxy)
+	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
+}
+
+// emitOperationDiagnostics reports operation features the generated tool does
+// not model: callbacks, and (outside proxy mode) security requirements.
+func emitOperationDiagnostics(op *openapi3.Operation, opPath string, opts Options, sink *diagSink) {
+	if len(op.Callbacks) > 0 {
+		names := make([]string, 0, len(op.Callbacks))
+		for name := range op.Callbacks {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		sink.warn(DiagDroppedCallback, opPath,
+			"callbacks are not modelled as MCP tools; dropped: "+strings.Join(names, ", "))
+	}
+	if op.Security != nil && len(*op.Security) > 0 && opts.Mode != ModeProxy {
+		// Proxy mode wires this automatically from env vars; the diagnostic
+		// would mislead the user into doing redundant manual work.
+		sink.info(DiagDroppedSecurityRequirement, opPath,
+			"per-operation security requirement is informational; supply credentials via runtime.WithExtraProperties / request editor. Schemes: "+strings.Join(dedupSchemeNames(*op.Security), ", "))
+	}
+}
+
+// applyRequestBody picks the request content type and records the body kind,
+// schema, and call method on out. It runs after collectOperationParams because
+// the Content-Type override diagnostic inspects out.HeaderParams.
+func applyRequestBody(out *Operation, op *openapi3.Operation, opPath string, opts Options, sink *diagSink) error {
+	if op.RequestBody == nil || op.RequestBody.Value == nil {
+		return nil
+	}
+	body := op.RequestBody.Value
+	out.RequestBodyRequired = body.Required
+	if len(body.Content) == 0 {
+		return nil
+	}
+	kind, ct, schema := pickRequestContent(body.Content, opts.PreferContentType)
+	out.HasRequestBody = true
+	out.RequestBodyKind = kind
+	out.RequestContentType = ct
+	out.CallMethod = callMethodFor(out.GoName, kind)
+	// Typed kinds keep the schema for input-schema lowering and
+	// (multipart) binary-field rewriting. Raw kinds intentionally
+	// drop the spec schema — the MCP input is a single base64 /
+	// plain-text string regardless of what the body looks like on
+	// the wire.
+	switch kind {
+	case BodyJSON, BodyForm, BodyMultipart:
+		out.RequestBody = schema
+	case BodyOctet, BodyText, BodyRaw:
+		out.RequestBody = nil
+	default:
+		return fmt.Errorf("unhandled body kind %q for content types %v", kind, contentKeys(body.Content))
+	}
+	if kind == BodyMultipart {
+		if mt := body.Content[ct]; mt != nil {
+			out.requestBodyEncoding = mt.Encoding
+		}
+	}
+	if kind != BodyJSON && hasContentTypeHeaderParam(out.HeaderParams) {
+		sink.warn(DiagContentTypeHeaderOverride, opPath,
+			fmt.Sprintf("Content-Type header parameter is silently overridden by the %s request body", ct))
+	}
+	return nil
 }
 
 // emitNestedMultipartEncodingDiagnostics surfaces OpenAPI `encoding` entries
@@ -1092,42 +1105,24 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 	var required []any
 	var fileFields []RequestFilePart
 
-	addGroup := func(group string, fields []ParamField) {
-		if len(fields) == 0 {
-			return
+	for _, group := range []struct {
+		name   string
+		fields []ParamField
+	}{
+		{inPath, op.PathParams},
+		{inQuery, op.QueryParams},
+		{inHeader, op.HeaderParams},
+		{inCookie, op.CookieParams},
+	} {
+		if len(group.fields) == 0 {
+			continue
 		}
-		groupProps := make(map[string]any, len(fields))
-		var groupRequired []any
-		for _, f := range fields {
-			var fieldSchema map[string]any
-			if f.Schema == nil {
-				fieldSchema = map[string]any{"type": "string"}
-			} else {
-				fieldSchema = conv.Convert(f.Schema)
-			}
-			mergeParamMetadata(fieldSchema, f)
-			groupProps[f.Name] = fieldSchema
-			if f.Required {
-				groupRequired = append(groupRequired, f.Name)
-			}
-		}
-		groupSchema := map[string]any{"type": "object", "properties": groupProps}
-		if len(groupRequired) > 0 {
-			groupSchema["required"] = groupRequired
-		}
-		if conv.OpenAICompat {
-			groupSchema["additionalProperties"] = false
-		}
-		props[group] = groupSchema
-		if len(groupRequired) > 0 {
-			required = append(required, group)
+		groupSchema, hasRequired := paramGroupSchema(group.fields, conv)
+		props[group.name] = groupSchema
+		if hasRequired {
+			required = append(required, group.name)
 		}
 	}
-
-	addGroup(inPath, op.PathParams)
-	addGroup(inQuery, op.QueryParams)
-	addGroup(inHeader, op.HeaderParams)
-	addGroup(inCookie, op.CookieParams)
 
 	if op.HasRequestBody {
 		bodySchema, parts := bodyInputSchema(op, conv)
@@ -1153,6 +1148,35 @@ func buildInputSchema(op Operation, conv *SchemaConverter) (string, []RequestFil
 		return "", nil, fmt.Errorf("marshal input schema: %w", err)
 	}
 	return string(buf), fileFields, nil
+}
+
+// paramGroupSchema builds the object schema for one parameter location
+// (path, query, header, or cookie). hasRequired reports whether any field in
+// the group is required, which makes the group itself required.
+func paramGroupSchema(fields []ParamField, conv *SchemaConverter) (schema map[string]any, hasRequired bool) {
+	groupProps := make(map[string]any, len(fields))
+	var groupRequired []any
+	for _, f := range fields {
+		var fieldSchema map[string]any
+		if f.Schema == nil {
+			fieldSchema = map[string]any{"type": "string"}
+		} else {
+			fieldSchema = conv.Convert(f.Schema)
+		}
+		mergeParamMetadata(fieldSchema, f)
+		groupProps[f.Name] = fieldSchema
+		if f.Required {
+			groupRequired = append(groupRequired, f.Name)
+		}
+	}
+	groupSchema := map[string]any{"type": "object", "properties": groupProps}
+	if len(groupRequired) > 0 {
+		groupSchema["required"] = groupRequired
+	}
+	if conv.OpenAICompat {
+		groupSchema["additionalProperties"] = false
+	}
+	return groupSchema, len(groupRequired) > 0
 }
 
 // enforceOpenAIStrictObjects applies the constraints OpenAI's strict tool

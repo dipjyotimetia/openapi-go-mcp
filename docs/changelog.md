@@ -14,7 +14,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Proxy scaffold SDK pins track the current dependencies.** Generated proxy modules now use `modelcontextprotocol/go-sdk v1.7.0` and `mark3labs/mcp-go v0.57.0`, matching the versions this generator tests.
+- **Proxy scaffold SDK pins track the current dependencies.** Generated proxy modules now use `modelcontextprotocol/go-sdk v1.8.0` and `mark3labs/mcp-go v1.1.1`, matching the versions this generator tests.
+- **Path parameters reject dot segments.** A path parameter of `.` or `..` now fails with `invalid_path_param` in companion, proxy and dynamic modes. Previously the oapi-codegen client (companion) or the upstream server (proxy, dynamic) could resolve it to a different endpoint.
+- **CLI diagnostics print once.** The generator's free-form warning lines are no longer written alongside the structured diagnostic list. Ctrl-C now cancels an in-flight spec load.
+- **`pkg/dynamic` no longer writes to process stderr.** Spec diagnostics go to the new optional `dynamic.Config.Warnings` writer and are discarded when it is nil. An operation whose input schema cannot be compiled is now also reported there at startup, not only on its first call.
+- **Dirty development builds no longer pin their version in proxy scaffolds.** A `+dirty` build version resolved to the clean commit and silently omitted local changes; such builds now require `-runtime-version`.
+- **Uncompilable input schemas report status 500.** The `invalid_input_schema` tool error now carries a status, and `runtime.InputValidator.Err` exposes the compile error.
+
+### Deprecated
+
+- **`runtime.DecodeProxyParam` and `runtime.ReadResponseBody`.** Use `runtime.SerializeProxyParam`, which applies OpenAPI `style`/`explode`/`allowReserved`, and `runtime.ReadResponseBodyLimit`, which honours `runtime.WithMaxResponseBytes`. Generated code already uses the replacements; both functions keep working.
+
+### Changed
+
+- **`make lint` runs a pinned golangci-lint v2 (v2.14.0) via `go run`**, and CI pins the same version instead of `latest`, so local and CI lint results match.
 
 ### Added — v1 production hardening
 

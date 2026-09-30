@@ -20,7 +20,7 @@ pkg/generator/security.go # Spec securitySchemes → SecurityScheme; env-var der
 pkg/generator/scaffold.go # main.go + go.mod + README emission (proxy mode)
 pkg/runtime/              # MCP-library-agnostic types (MCPServer, Tool, helpers)
 pkg/runtime/auth.go       # ApplyAPIKey / ApplyBearer / ApplyBasic + MissingCredentialError
-pkg/runtime/proxy.go      # DecodeProxyParam / BuildProxyURL / EncodeJSON|FormBody (proxy mode)
+pkg/runtime/proxy.go      # SerializeProxyParam / BuildProxyURL / EncodeJSON|FormBody (proxy mode)
 pkg/runtime/gosdk/        # Adapter for modelcontextprotocol/go-sdk
 pkg/runtime/mark3labs/    # Adapter for mark3labs/mcp-go
 examples/                 # End-to-end demos (one per MCP backend, one for Swagger 2.0)

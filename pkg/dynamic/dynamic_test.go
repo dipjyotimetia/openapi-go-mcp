@@ -411,6 +411,44 @@ paths:
 	}
 }
 
+func TestRegister_RejectsPathDotSegments(t *testing.T) {
+	called := false
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	specPath := filepath.Join(t.TempDir(), "users.yaml")
+	spec := fmt.Sprintf(`openapi: 3.0.3
+info: { title: Users, version: 1.0.0 }
+servers: [ { url: %s } ]
+paths:
+  /users/{id}:
+    get:
+      operationId: getUser
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "204": { description: ok } }
+`, upstream.URL)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{}
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{UpstreamHTTPClient: upstream.Client()}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := server.handlers["getUser"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{
+		"path": map[string]any{"id": ".."},
+	}})
+	if err != nil || result == nil || !result.IsError || !strings.Contains(result.Text, "invalid_path_param") {
+		t.Fatalf("expected invalid_path_param tool error, got result=%+v err=%v", result, err)
+	}
+	if called {
+		t.Error("upstream was called with a dot-segment path")
+	}
+}
+
 func TestRegister_RemoteSourceRequiresExplicitBaseURL(t *testing.T) {
 	t.Parallel()
 
