@@ -1,0 +1,75 @@
+pkg/generator/scaffold_test.go
+  s_16e570e680e5a3::t_eb8a9c5f2e3241 316-322
+tests/e2e/cli_test.go
+  s_16e570e680e5a3::t_8d48cb74c250f9 70-73
+pkg/dynamic/dynamic.go
+  s_16e570e680e5a3::t_2f873712a78990 350,354
+  s_16e570e680e5a3::t_b38102b59e1d86 117-130,132,137-153,341,345,348,353,362,364,367,371,374,378
+  s_16e570e680e5a3::t_09e2646c493f54 351-352
+  s_16e570e680e5a3::t_d60fa1a78e1441 75-77,98-102
+pkg/generator/scaffold.go
+  s_16e570e680e5a3::t_6995f1eac7657c 40-41
+  s_16e570e680e5a3::t_eb8a9c5f2e3241 204-206
+  s_16e570e680e5a3::t_ce4cf0467e5536 214
+docs/changelog.md
+  s_16e570e680e5a3::t_2dfcaf35af7843 17
+  s_16e570e680e5a3::t_7ab5ae59ad4f82 18
+  s_16e570e680e5a3::t_ef2f30b2bbe7e5 19,21-22
+  s_16e570e680e5a3::t_1825f4a6b405f4 24-30
+  s_16e570e680e5a3::t_09e2646c493f54 20
+  s_16e570e680e5a3::t_8d1052da7f6896 23
+pkg/runtime/decode_params_test.go
+  s_16e570e680e5a3::t_fde61825f0a6d9 177-191
+pkg/generator/operation.go
+  s_16e570e680e5a3::t_9bedf9b72599f1 236,239,371,386,388,393,1108-1118,1120-1123,1153-1179
+  s_16e570e680e5a3::t_b26698130d801f 367-370,392
+  s_16e570e680e5a3::t_1957ce0fdf2908 398,400-404,409,430,432-434,450,452-457,459-484,487-489,491,1180
+  s_16e570e680e5a3::t_05bdf420ae87dc 372-385,387,389-391,394-397,399,1181
+pkg/runtime/proxy_test.go
+  s_16e570e680e5a3::t_112237dc5156cc 360,369-373
+  s_16e570e680e5a3::t_441a507cd010ff 358-359,361-368,374-375
+pkg/dynamic/dynamic_test.go
+  s_16e570e680e5a3::t_d522194b5e4024 414-451
+pkg/runtime/http.go
+  s_16e570e680e5a3::t_fde61825f0a6d9 101-105
+docs/architecture.md
+  s_16e570e680e5a3::t_d8095c1e8c74bb 23
+pkg/runtime/validation_test.go
+  s_16e570e680e5a3::t_5999fdbce3f811 13,39-51
+  s_16e570e680e5a3::t_c2b3498d3e1645 52
+pkg/runtime/validation.go
+  s_16e570e680e5a3::t_2f873712a78990 55-64,77
+pkg/runtime/proxy.go
+  s_16e570e680e5a3::t_112237dc5156cc 190-195
+  s_16e570e680e5a3::t_d8095c1e8c74bb 45-47,516-518,631-633
+  s_16e570e680e5a3::t_14a8e10ce3f2ef 303
+  s_16e570e680e5a3::t_59958352079f60 187-189,196-197,235,259,293,296,316-318,325,330-332,344,389-397,417-418,421,437-441
+cmd/openapi-go-mcp/main.go
+  s_16e570e680e5a3::t_eb8a9c5f2e3241 22,136-139
+  s_16e570e680e5a3::t_d60fa1a78e1441 17,19,156-158,179-180
+  s_16e570e680e5a3::t_7ab5ae59ad4f82 197-200
+.github/workflows/ci.yml
+  s_16e570e680e5a3::t_91c8672c270033 62-63
+Makefile
+  s_16e570e680e5a3::t_91c8672c270033 10-13,29
+go.mod
+  s_16e570e680e5a3::t_b00625cd86f4c7 3,7-8,16,25-29
+go.sum
+  s_16e570e680e5a3::t_6769fc18c8b110 16-17,20,36-37,40-41,71-72,75-76,79-80,83-84,87-88,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1cab552c686516b270771df336dbd8f60850bdb9",
+  "prompts": {},
+  "sessions": {
+    "s_16e570e680e5a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2e3b12b-1e8d-4034-a74a-e7754e32f735",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Dipjyoti Metia <dipjyotimetia@gmail.com>"
+    }
+  }
+}
