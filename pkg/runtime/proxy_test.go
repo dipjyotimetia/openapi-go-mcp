@@ -355,3 +355,21 @@ func TestEncodeFormBody_EmptyBodyProducesEmptyForm(t *testing.T) {
 		t.Errorf("expected empty form body, got %q", string(b))
 	}
 }
+
+func TestSerializeProxyParam_RejectsPathDotSegments(t *testing.T) {
+	cases := []any{".", "..", []any{".."}}
+	for _, value := range cases {
+		args := map[string]any{"path": map[string]any{"id": value}}
+		_, _, err := SerializeProxyParam(args, ProxyParamSpec{Name: "id", In: "path", Style: "simple"}, true)
+		var toolErr *ToolError
+		if !errors.As(err, &toolErr) || toolErr.Code != "invalid_path_param" || toolErr.Status != http.StatusBadRequest {
+			t.Errorf("value %#v: got err %v, want invalid_path_param ToolError", value, err)
+		}
+	}
+	for _, value := range []any{"...", ".hidden", []any{"a", ".."}} {
+		args := map[string]any{"path": map[string]any{"id": value}}
+		if _, _, err := SerializeProxyParam(args, ProxyParamSpec{Name: "id", In: "path", Style: "simple"}, true); err != nil {
+			t.Errorf("value %#v is not a dot segment, got err %v", value, err)
+		}
+	}
+}

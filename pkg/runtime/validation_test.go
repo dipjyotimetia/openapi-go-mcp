@@ -10,6 +10,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -33,5 +34,19 @@ func TestCompileInputValidator_ValidatesDraft7SchemaWithDefs(t *testing.T) {
 		if err := validator.Validate(args); err == nil {
 			t.Errorf("Validate(%v) succeeded, want schema validation error", args)
 		}
+	}
+}
+
+func TestCompileInputValidator_InvalidSchemaReportsErr(t *testing.T) {
+	validator := CompileInputValidator(json.RawMessage(`{"type": 7}`))
+	if validator.Err() == nil {
+		t.Fatal("Err() = nil, want compile error")
+	}
+	var toolErr *ToolError
+	if err := validator.Validate(map[string]any{}); !errors.As(err, &toolErr) || toolErr.Code != "invalid_input_schema" || toolErr.Status != 500 {
+		t.Fatalf("Validate error = %v, want invalid_input_schema with status 500", err)
+	}
+	if CompileInputValidator(json.RawMessage(`{"type": "object"}`)).Err() != nil {
+		t.Error("Err() non-nil for a valid schema")
 	}
 }

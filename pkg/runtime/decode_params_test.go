@@ -174,3 +174,18 @@ func TestDecodeCookieParam_TypeMismatchSurfacesToolError(t *testing.T) {
 		t.Errorf("unexpected envelope: status=%d code=%q", te.Status, te.Code)
 	}
 }
+
+func TestDecodePathParam_RejectsDotSegments(t *testing.T) {
+	for _, value := range []string{".", ".."} {
+		var out string
+		err := DecodePathParam(map[string]any{"path": map[string]any{"id": value}}, "id", &out)
+		var toolErr *ToolError
+		if !errors.As(err, &toolErr) || toolErr.Code != "invalid_path_param" || toolErr.Status != 400 {
+			t.Errorf("value %q: got err %v, want invalid_path_param", value, err)
+		}
+	}
+	var out string
+	if err := DecodePathParam(map[string]any{"path": map[string]any{"id": "..."}}, "id", &out); err != nil || out != "..." {
+		t.Errorf("value \"...\": out=%q err=%v", out, err)
+	}
+}

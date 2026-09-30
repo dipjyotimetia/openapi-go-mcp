@@ -52,6 +52,16 @@ func CompileInputValidator(raw json.RawMessage) *InputValidator {
 	return &InputValidator{schema: schema}
 }
 
+// Err reports why the schema could not be compiled, or nil when the
+// validator is usable. Callers that register tools at startup can use it to
+// fail fast instead of registering a tool whose every call errors.
+func (v *InputValidator) Err() error {
+	if v == nil {
+		return fmt.Errorf("input validator is nil")
+	}
+	return v.err
+}
+
 // Validate reports a ToolError suitable for HandleError when arguments do not
 // conform to the generated input schema.
 func (v *InputValidator) Validate(arguments map[string]any) error {
@@ -64,6 +74,7 @@ func (v *InputValidator) Validate(arguments map[string]any) error {
 			cause = fmt.Errorf("input validator is nil")
 		}
 		return &ToolError{
+			Status:  500,
 			Code:    "invalid_input_schema",
 			Message: fmt.Sprintf("unable to validate tool arguments: %v", cause),
 			Cause:   cause,

@@ -42,9 +42,9 @@ import (
 //   - object → JSON-encoded. Covers the rare deepObject case and lets
 //     the upstream decode it back if it expects JSON-as-string.
 //
-// Spec authors who need different serialisations (matrix, pipeDelimited,
-// explode=true) should currently use companion mode; proxy-mode support
-// is documented in design-decisions §14.
+// Deprecated: Use SerializeProxyParam, which applies the parameter's OpenAPI
+// style, explode, and allowReserved settings. Generated proxy handlers no
+// longer call DecodeProxyParam.
 func DecodeProxyParam(args map[string]any, group, name string, required bool) (string, bool, error) {
 	g, _ := args[group].(map[string]any)
 	if g == nil {
@@ -184,16 +184,19 @@ func serializeProxyParam(v any, spec ProxyParamSpec) (ProxyParam, error) {
 	if err := validateProxyParamStyle(spec); err != nil {
 		return ProxyParam{}, err
 	}
-	if spec.In == "path" {
-		return ProxyParam{Value: serializePathParam(v, spec)}, nil
+	switch spec.In {
+	case "path":
+		value := serializeStyled(v, spec, pathEscape)
+		// url.PathEscape leaves "." and ".." intact; as a whole segment they
+		// would let tool input walk the upstream path (e.g. /users/.. → /).
+		if value == "." || value == ".." {
+			return ProxyParam{}, fmt.Errorf("value %q is a dot segment", value)
+		}
+		return ProxyParam{Value: value}, nil
+	case "header":
+		return ProxyParam{Value: serializeStyled(v, spec, proxyScalar)}, nil
 	}
 	switch spec.Style {
-	case "simple":
-		return ProxyParam{Value: serializeSimple(v, spec.Explode)}, nil
-	case "label":
-		return ProxyParam{Value: serializeLabel(v, spec.Explode)}, nil
-	case "matrix":
-		return ProxyParam{Value: serializeMatrix(spec.Name, v, spec.Explode)}, nil
 	case "form":
 		return serializeForm(spec, v)
 	case "spaceDelimited":
@@ -228,65 +231,8 @@ func validateProxyParamStyle(spec ProxyParamSpec) error {
 	return nil
 }
 
-func serializeSimple(v any, explode bool) string {
-	if items, ok := proxyArray(v); ok {
-		return strings.Join(items, ",")
-	}
-	if fields, ok := proxyObject(v); ok {
-		if explode {
-			return strings.Join(objectParts(fields, "="), ",")
-		}
-		return strings.Join(objectParts(fields, ","), ",")
-	}
-	return proxyScalar(v)
-}
-
-func serializeLabel(v any, explode bool) string {
-	if items, ok := proxyArray(v); ok {
-		separator := ","
-		if explode {
-			separator = "."
-		}
-		return "." + strings.Join(items, separator)
-	}
-	if fields, ok := proxyObject(v); ok {
-		if explode {
-			return "." + strings.Join(objectParts(fields, "="), ".")
-		}
-		return "." + strings.Join(objectParts(fields, "."), ".")
-	}
-	return "." + proxyScalar(v)
-}
-
-func serializeMatrix(name string, v any, explode bool) string {
-	if items, ok := proxyArray(v); ok {
-		if len(items) == 0 {
-			return ";" + name
-		}
-		if explode {
-			parts := make([]string, 0, len(items))
-			for _, item := range items {
-				parts = append(parts, ";"+name+"="+item)
-			}
-			return strings.Join(parts, "")
-		}
-		return ";" + name + "=" + strings.Join(items, ",")
-	}
-	if fields, ok := proxyObject(v); ok {
-		if explode {
-			parts := make([]string, 0, len(fields))
-			for _, field := range fields {
-				parts = append(parts, ";"+field.Key+"="+field.Value)
-			}
-			return strings.Join(parts, "")
-		}
-		return ";" + name + "=" + strings.Join(objectParts(fields, ","), ",")
-	}
-	return ";" + name + "=" + proxyScalar(v)
-}
-
 func serializeForm(spec ProxyParamSpec, v any) (ProxyParam, error) {
-	if items, ok := proxyArray(v); ok {
+	if items, ok := proxyArray(v, proxyScalar); ok {
 		if spec.Explode && spec.In == "query" {
 			query := make(ProxyQuery, 0, len(items))
 			for _, item := range items {
@@ -310,7 +256,7 @@ func serializeForm(spec ProxyParamSpec, v any) (ProxyParam, error) {
 		value := strings.Join(items, ",")
 		return formScalarParam(spec, value), nil
 	}
-	if fields, ok := proxyObject(v); ok {
+	if fields, ok := proxyObject(v, proxyScalar); ok {
 		if spec.In == "query" && spec.Explode {
 			query := make(ProxyQuery, 0, len(fields))
 			for _, field := range fields {
@@ -344,17 +290,17 @@ func formScalarParam(spec ProxyParamSpec, value string) ProxyParam {
 
 func serializeDelimited(spec ProxyParamSpec, v any, delimiter string) (ProxyParam, error) {
 	value := proxyScalar(v)
-	if items, ok := proxyArray(v); ok {
+	if items, ok := proxyArray(v, proxyScalar); ok {
 		value = strings.Join(items, delimiter)
 	}
-	if fields, ok := proxyObject(v); ok {
+	if fields, ok := proxyObject(v, proxyScalar); ok {
 		value = strings.Join(objectParts(fields, delimiter), delimiter)
 	}
 	return ProxyParam{Value: value, Query: ProxyQuery{{Key: spec.Name, Value: value, AllowReserved: spec.AllowReserved}}}, nil
 }
 
 func serializeDeepObject(spec ProxyParamSpec, v any) (ProxyParam, error) {
-	fields, ok := proxyObject(v)
+	fields, ok := proxyObject(v, proxyScalar)
 	if !ok {
 		return ProxyParam{}, fmt.Errorf("deepObject requires an object value")
 	}
@@ -367,19 +313,23 @@ func serializeDeepObject(spec ProxyParamSpec, v any) (ProxyParam, error) {
 
 type proxyObjectField struct{ Key, Value string }
 
-func proxyArray(v any) ([]string, bool) {
+// proxyArray renders each item of a JSON array with transform. The bool
+// reports whether v was an array at all.
+func proxyArray(v any, transform func(any) string) ([]string, bool) {
 	items, ok := v.([]any)
 	if !ok {
 		return nil, false
 	}
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		out = append(out, proxyScalar(item))
+		out = append(out, transform(item))
 	}
 	return out, true
 }
 
-func proxyObject(v any) ([]proxyObjectField, bool) {
+// proxyObject renders a JSON object's keys and values with transform, in
+// sorted key order so serialized output is deterministic.
+func proxyObject(v any, transform func(any) string) ([]proxyObjectField, bool) {
 	object, ok := v.(map[string]any)
 	if !ok {
 		return nil, false
@@ -391,7 +341,7 @@ func proxyObject(v any) ([]proxyObjectField, bool) {
 	slices.Sort(keys)
 	out := make([]proxyObjectField, 0, len(keys))
 	for _, key := range keys {
-		out = append(out, proxyObjectField{Key: key, Value: proxyScalar(object[key])})
+		out = append(out, proxyObjectField{Key: transform(key), Value: transform(object[key])})
 	}
 	return out, true
 }
@@ -436,13 +386,16 @@ func encodeQueryComponent(value string, allowReserved bool) string {
 // percent-encoded even when allowReserved is true, preserving the value sent
 // to the upstream service instead of silently losing everything after it.
 
-func serializePathParam(v any, spec ProxyParamSpec) string {
-	name := url.PathEscape(spec.Name)
-	escape := func(value any) string { return url.PathEscape(proxyScalar(value)) }
-	if items, ok := proxyArrayRaw(v, escape); ok {
+// pathEscape renders one value for a URL path segment.
+func pathEscape(value any) string { return url.PathEscape(proxyScalar(value)) }
+
+// serializeStyled applies the simple, label, and matrix styles shared by path
+// and header parameters. escape renders each name, key, and value: pathEscape
+// for path segments, proxyScalar (no escaping) for header values.
+func serializeStyled(v any, spec ProxyParamSpec, escape func(any) string) string {
+	name := escape(spec.Name)
+	if items, ok := proxyArray(v, escape); ok {
 		switch spec.Style {
-		case "simple":
-			return strings.Join(items, ",")
 		case "label":
 			separator := ","
 			if spec.Explode {
@@ -461,15 +414,12 @@ func serializePathParam(v any, spec ProxyParamSpec) string {
 				return strings.Join(parts, "")
 			}
 			return ";" + name + "=" + strings.Join(items, ",")
+		default:
+			return strings.Join(items, ",")
 		}
 	}
-	if fields, ok := proxyObjectEscaped(v, escape); ok {
+	if fields, ok := proxyObject(v, escape); ok {
 		switch spec.Style {
-		case "simple":
-			if spec.Explode {
-				return strings.Join(objectParts(fields, "="), ",")
-			}
-			return strings.Join(objectParts(fields, ","), ",")
 		case "label":
 			if spec.Explode {
 				return "." + strings.Join(objectParts(fields, "="), ".")
@@ -484,12 +434,15 @@ func serializePathParam(v any, spec ProxyParamSpec) string {
 				return strings.Join(parts, "")
 			}
 			return ";" + name + "=" + strings.Join(objectParts(fields, ","), ",")
+		default:
+			if spec.Explode {
+				return strings.Join(objectParts(fields, "="), ",")
+			}
+			return strings.Join(objectParts(fields, ","), ",")
 		}
 	}
 	value := escape(v)
 	switch spec.Style {
-	case "simple":
-		return value
 	case "label":
 		return "." + value
 	case "matrix":
@@ -497,35 +450,6 @@ func serializePathParam(v any, spec ProxyParamSpec) string {
 	default:
 		return value
 	}
-}
-
-func proxyArrayRaw(v any, transform func(any) string) ([]string, bool) {
-	items, ok := v.([]any)
-	if !ok {
-		return nil, false
-	}
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		out = append(out, transform(item))
-	}
-	return out, true
-}
-
-func proxyObjectEscaped(v any, transform func(any) string) ([]proxyObjectField, bool) {
-	object, ok := v.(map[string]any)
-	if !ok {
-		return nil, false
-	}
-	keys := make([]string, 0, len(object))
-	for key := range object {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	out := make([]proxyObjectField, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, proxyObjectField{Key: transform(key), Value: transform(object[key])})
-	}
-	return out, true
 }
 
 func isUnreserved(c byte) bool {
@@ -589,8 +513,9 @@ func stringifyParam(v any) (string, error) {
 // The trailing slash on baseURL and the leading slash on opPath are
 // normalised: exactly one slash joins them. Spec authors who name their
 // operation path "" (legal but rare) get baseURL back unchanged.
-// query accepts url.Values for backwards compatibility and ProxyQuery for
-// OpenAPI-aware serialization. New generated proxy handlers use ProxyQuery.
+// query accepts nil, ProxyQuery, or url.Values. url.Values is kept only for
+// backwards compatibility and always percent-encodes reserved characters;
+// new callers should pass ProxyQuery, as generated proxy handlers do.
 func BuildProxyURL(baseURL, opPath string, query any) (string, error) {
 	if baseURL == "" {
 		return "", fmt.Errorf("base URL is empty (set API_BASE_URL or configure servers[] in the spec)")
@@ -703,8 +628,9 @@ func EncodeFormBody(args map[string]any) (io.Reader, string, error) {
 const DefaultMaxResponseBytes int64 = 16 << 20
 
 // ReadResponseBody drains an HTTP response up to DefaultMaxResponseBytes.
-// New proxy code should use ReadResponseBodyLimit so deployments can choose a
-// smaller or larger bound through runtime.WithMaxResponseBytes.
+//
+// Deprecated: Use ReadResponseBodyLimit so deployments can choose a smaller or
+// larger bound through runtime.WithMaxResponseBytes.
 func ReadResponseBody(resp *http.Response) ([]byte, error) {
 	return ReadResponseBodyLimit(resp, DefaultMaxResponseBytes)
 }

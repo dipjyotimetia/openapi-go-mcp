@@ -313,6 +313,13 @@ func TestRuntimeVersionForScaffold_RejectsUnresolvedBuildVersion(t *testing.T) {
 	}
 }
 
+func TestRuntimeVersionForScaffold_RejectsDirtyBuildVersion(t *testing.T) {
+	_, err := runtimeVersionForScaffold(ScaffoldOverrides{}, "v1.1.1-0.20260908142547-49f79fae5c32+dirty")
+	if err == nil || !strings.Contains(err.Error(), "RuntimeVersion") {
+		t.Fatalf("expected dirty build version to be rejected, got %v", err)
+	}
+}
+
 func TestRuntimeVersionForScaffold_AcceptsExplicitVersionOrReplaceOverride(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -7,6 +7,10 @@ BIN_DIR := bin
 # exactly what we want when regenerating); leaving it off would make
 # regen-examples fail on second run.
 GEN_FLAGS := -force
+# Keep in sync with the golangci-lint version in .github/workflows/ci.yml.
+# `go run` builds the pinned v2 release, so a v1 binary on PATH can't pick
+# up the v2 config.
+GOLANGCI_LINT_VERSION := v2.14.0
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -22,7 +26,7 @@ vet:
 	go vet ./...
 
 lint:
-	golangci-lint run
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
 fmt:
 	gofmt -s -w .

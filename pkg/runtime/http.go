@@ -98,6 +98,11 @@ func DecodePathParam(args map[string]any, name string, out any) error {
 			Message: fmt.Sprintf("missing path parameter %q", name),
 		}
 	}
+	// oapi-codegen clients resolve the operation path against the server URL,
+	// so a "." or ".." value would walk to a different endpoint.
+	if s, isString := v.(string); isString && (s == "." || s == "..") {
+		return &ToolError{Status: 400, Code: "invalid_path_param", Message: fmt.Sprintf("path parameter %q must not be a dot segment", name)}
+	}
 	buf, err := json.Marshal(v)
 	if err != nil {
 		return &ToolError{Status: 400, Code: "invalid_path_param", Message: err.Error(), Cause: err}
