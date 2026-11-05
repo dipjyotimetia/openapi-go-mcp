@@ -333,6 +333,7 @@ petmcp.RegisterSwaggerPetstoreClient(s, client, runtime.WithExtraProperties(
 | [`examples/users-api`](examples/users-api) | UUID path params, required headers, PUT / PATCH / DELETE |
 | [`examples/complex`](examples/complex) | Recursive `$ref`, `oneOf` / `allOf`, enums, `date-time` / `uuid` formats |
 | [`examples/non-json-bodies`](examples/non-json-bodies) | Form-urlencoded, multipart (base64 file fields), octet-stream, text/plain, XML |
+| [`examples/edge-cases`](examples/edge-cases) | Enum / array / sized-integer / `x-go-type-name` path params, names that shadow generated identifiers, vendor `+json` bodies, missing `operationId` |
 
 ## Documentation
 

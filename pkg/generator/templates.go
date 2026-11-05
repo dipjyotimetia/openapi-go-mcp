@@ -113,7 +113,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 				defer cancel()
 			}
 			{{- range .PathParams}}
-			var {{.GoVar}} {{.GoType}}
+			var {{.GoVar}} {{.GoTypeExpr $.ClientAlias}}
 			if err := runtime.DecodePathParam(req.Arguments, "{{.Name}}", &{{.GoVar}}); err != nil {
 				return runtime.HandleError(err)
 			}
@@ -126,7 +126,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 			{{- end}}
 			{{- if .HasRequestBody}}
 			{{- if isTypedBody .RequestBodyKind}}
-			var body {{$.ClientAlias}}.{{bodyTypeName .GoName .RequestBodyKind}}
+			var body {{$.ClientAlias}}.{{bodyTypeName .GoName .RequestBodyKind .RequestContentType}}
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
 			}
@@ -664,13 +664,13 @@ func annotationsLit(op Operation) string {
 // bodyTypeName returns the oapi-codegen-generated Go type name for the typed
 // request body of a JSON or Form operation. Raw kinds do not use a typed body
 // var and never call this helper.
-func bodyTypeName(goMethod string, kind BodyKind) string {
+func bodyTypeName(goMethod string, kind BodyKind, contentType string) string {
 	base := strings.TrimSuffix(goMethod, "WithResponse")
 	switch kind {
 	case BodyForm:
 		return base + "FormdataRequestBody"
 	case BodyJSON:
-		fallthrough
+		return base + jsonBodyTag(contentType) + "RequestBody"
 	default:
 		return base + "JSONRequestBody"
 	}

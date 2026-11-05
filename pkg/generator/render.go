@@ -368,7 +368,11 @@ func collectExtraImports(ops []Operation) []string {
 			if p.GoTypeImport == "" {
 				continue
 			}
-			seen[p.GoTypeImport] = importAliasFor(p.GoType)
+			alias := p.GoTypeImportAlias
+			if alias == "" {
+				alias = importAliasFor(p.GoType)
+			}
+			seen[p.GoTypeImport] = alias
 		}
 	}
 	if len(seen) == 0 {

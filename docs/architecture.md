@@ -293,7 +293,7 @@ The generator dispatches on the operation's request content type. The MCP `body`
 
 | Content type | `BodyKind` | Companion call site | Proxy build site | MCP `body` argument |
 |---|---|---|---|---|
-| `application/json` (and `*+json`) | `BodyJSON` | `<Op>WithResponse(ctx, …, body, …)` | `runtime.EncodeJSONBody(args["body"])` | object matching the schema |
+| `application/json` (and `*+json`) | `BodyJSON` | `<Op>WithResponse(ctx, …, body, …)`; `*+json` uses `<Op>With<MediaType>BodyWithResponse` | `runtime.EncodeJSONBody(args["body"])` | object matching the schema |
 | `application/x-www-form-urlencoded` | `BodyForm` | `<Op>WithFormdataBodyWithResponse(ctx, …, body, …)` | `runtime.EncodeFormBody(req.Arguments)` | object matching the schema |
 | `multipart/form-data` | `BodyMultipart` | `<Op>WithBodyWithResponse(ctx, …, contentType, body, …)` | `runtime.BuildMultipartBody(req.Arguments, fileFields)` | object; `format:binary` fields are base64 strings |
 | `application/octet-stream` | `BodyOctet` | `<Op>WithBodyWithResponse(ctx, …, "application/octet-stream", body, …)` | `runtime.BuildBase64BytesBody(req.Arguments)` | base64-encoded string |

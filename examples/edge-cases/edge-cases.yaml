@@ -1,0 +1,153 @@
+openapi: "3.0.3"
+info:
+  title: Edge Cases API
+  version: "1.0.0"
+  description: |
+    Path-parameter and request-body shapes for which oapi-codegen emits
+    something other than a plain builtin. `make regen-examples` compiles the
+    generated companion against the real oapi-codegen client, so a type or
+    method-name mismatch fails CI. See tests/e2e/edge_cases_test.go.
+servers:
+  - url: http://localhost:8080
+paths:
+  # Issue #32: inline enum path param -> <Op>Params<Name>.
+  /status/{status}:
+    post:
+      operationId: setTicketStatus
+      summary: Set ticket status
+      parameters:
+        - name: status
+          in: path
+          required: true
+          schema: {type: string, enum: [Apple, Banana]}
+      responses:
+        "204": {description: ticket updated}
+
+  # $ref'd enum component, integer enum, hyphenated name, shared component parameter.
+  /pets/{petStatus}/levels/{level}/kinds/{ticket-kind}/{kind}:
+    get:
+      operationId: findPets
+      parameters:
+        - name: petStatus
+          in: path
+          required: true
+          schema: {$ref: '#/components/schemas/PetStatus'}
+        - name: level
+          in: path
+          required: true
+          schema: {type: integer, enum: [1, 2, 3]}
+        - name: ticket-kind
+          in: path
+          required: true
+          schema: {type: string, enum: [bug, task]}
+        - $ref: '#/components/parameters/KindParam'
+        - name: sort
+          in: query
+          schema: {type: string, enum: [asc, desc]}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+
+  # Arrays of primitives, inline enums, and $ref'd enums.
+  /batch/{ids}/{tags}/{states}:
+    get:
+      operationId: getBatch
+      parameters:
+        - {name: ids, in: path, required: true, schema: {type: array, items: {type: integer, format: int64}}}
+        - {name: tags, in: path, required: true, schema: {type: array, items: {type: string, enum: [red, blue]}}}
+        - {name: states, in: path, required: true, schema: {type: array, items: {$ref: '#/components/schemas/PetStatus'}}}
+      responses:
+        "204": {description: ok}
+
+  # Sized/unsigned integer and byte formats, x-go-type-name.
+  /formats/{small}/{unsigned}/{raw}/{named}:
+    get:
+      operationId: getFormats
+      parameters:
+        - {name: small, in: path, required: true, schema: {type: integer, format: int8}}
+        - {name: unsigned, in: path, required: true, schema: {type: integer, format: uint32}}
+        - {name: raw, in: path, required: true, schema: {type: string, format: byte}}
+        - {name: named, in: path, required: true, schema: {type: string, enum: [x, y], x-go-type-name: NamedChoice}}
+      responses:
+        "204": {description: ok}
+
+  # Parameter names that shadow handler locals, imported packages, and the
+  # client package alias ("edge").
+  /shadow/{type}/{resp}/{body}/{json}/{cfg}/{edge}:
+    get:
+      operationId: shadowNames
+      parameters:
+        - {name: type, in: path, required: true, schema: {type: string}}
+        - {name: resp, in: path, required: true, schema: {type: string}}
+        - {name: body, in: path, required: true, schema: {type: string}}
+        - {name: json, in: path, required: true, schema: {type: string}}
+        - {name: cfg, in: path, required: true, schema: {type: string}}
+        - {name: edge, in: path, required: true, schema: {type: string}}
+      responses:
+        "204": {description: ok}
+
+  # PathItem-level inline enum stays a primitive in oapi-codegen; no operationId.
+  /tenants/{tenant}/things/{thing}:
+    parameters:
+      - name: tenant
+        in: path
+        required: true
+        schema: {type: string, enum: [acme, globex]}
+    get:
+      parameters:
+        - name: thing
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: ok}
+
+  # Vendor JSON media types use content-type-specific client methods.
+  /resources/{id}:
+    patch:
+      operationId: patchResource
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {$ref: '#/components/schemas/Resource'}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Resource'}
+  /documents:
+    post:
+      operationId: createDocument
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema: {$ref: '#/components/schemas/Resource'}
+          application/json:
+            schema: {$ref: '#/components/schemas/Resource'}
+      responses:
+        "201": {description: created}
+
+components:
+  parameters:
+    KindParam:
+      name: kind
+      in: path
+      required: true
+      schema: {type: string, enum: [k1, k2]}
+  schemas:
+    PetStatus:
+      type: string
+      enum: [available, sold]
+    Resource:
+      type: object
+      properties:
+        name: {type: string}
+        status: {$ref: '#/components/schemas/PetStatus'}

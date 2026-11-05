@@ -14,7 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Proxy scaffold SDK pins track the current dependencies.** Generated proxy modules now use `modelcontextprotocol/go-sdk v1.8.0` and `mark3labs/mcp-go v1.1.1`, matching the versions this generator tests.
+- **Path parameter types match the oapi-codegen client** ([#32](https://github.com/dipjyotimetia/openapi-go-mcp/issues/32)). Companion code declared every non-primitive path parameter as `string` (or its primitive), so the call to the typed client failed to compile. Inline enums now use `<Op>Params<Name>` (PathItem-level inline enums stay primitive, as in oapi-codegen), `$ref`'d enum/override components use the component type, arrays use `[]T`, `int8`…`uint64` / `byte` / `binary` formats map to their oapi-codegen types, and `x-go-type` / `x-go-type-import` / `x-go-type-name` are honoured.
+- **Path parameter names no longer shadow generated identifiers.** Parameters named e.g. `resp`, `body`, `json`, `cfg`, or the client package alias are renamed with a trailing `_` instead of producing uncompilable code.
+- **Vendor JSON request bodies compile.** `*+json` bodies (`application/merge-patch+json`, `application/vnd.api+json`, …) now call oapi-codegen's `<Op>With<MediaType>BodyWithResponse` with `<Op><MediaType>RequestBody`; exact `application/json` is preferred when an operation declares both.
+- **Operations without an `operationId` call the right client method.** The fallback name now matches oapi-codegen (`GetPetsId`, not `GETPetsId`).
+- **Proxy scaffold SDK pins track the current dependencies.** Generated proxy modules now use `modelcontextprotocol/go-sdk v1.8.0` and `mark3labs/mcp-go v1.5.0`, matching the versions this generator tests.
 - **Path parameters reject dot segments.** A path parameter of `.` or `..` now fails with `invalid_path_param` in companion, proxy and dynamic modes. Previously the oapi-codegen client (companion) or the upstream server (proxy, dynamic) could resolve it to a different endpoint.
 - **CLI diagnostics print once.** The generator's free-form warning lines are no longer written alongside the structured diagnostic list. Ctrl-C now cancels an in-flight spec load.
 - **`pkg/dynamic` no longer writes to process stderr.** Spec diagnostics go to the new optional `dynamic.Config.Warnings` writer and are discarded when it is nil. An operation whose input schema cannot be compiled is now also reported there at startup, not only on its first call.
@@ -27,6 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **New `examples/edge-cases`** compiles companion code against real oapi-codegen output for these shapes in `make regen-examples`, with e2e coverage in `tests/e2e/edge_cases_test.go`.
+- **kin-openapi v0.152 validates security requirements** against declared `securitySchemes`; specs referencing an undefined scheme now fail to load. Swagger 2.0 `collectionFormat: csv` now converts to `style: form, explode: false`.
+- **Dependencies updated:** `getkin/kin-openapi` v0.152.0, `mark3labs/mcp-go` v1.5.0, `oapi-codegen/runtime` v1.8.0, plus indirect `oasdiff/yaml`, `oasdiff/yaml3` and `golang.org/x/*` bumps.
 - **`make lint` runs a pinned golangci-lint v2 (v2.14.0) via `go run`**, and CI pins the same version instead of `latest`, so local and CI lint results match.
 
 ### Added — v1 production hardening
