@@ -91,6 +91,11 @@ type ProxyParamSpec struct {
 	Style         string
 	Explode       bool
 	AllowReserved bool
+	// ContentType is set for parameters declared with OpenAPI `content`
+	// instead of `schema`. The value is then encoded as a single document
+	// (JSON for JSON media types) and Style/Explode are ignored, matching
+	// oapi-codegen's client.
+	ContentType string
 }
 
 // ProxyQuery is a deterministic collection of query pairs. It is separate
@@ -181,6 +186,9 @@ func missingProxyParamError(group, name string) error {
 }
 
 func serializeProxyParam(v any, spec ProxyParamSpec) (ProxyParam, error) {
+	if spec.ContentType != "" {
+		return serializeContentParam(v, spec)
+	}
 	if err := validateProxyParamStyle(spec); err != nil {
 		return ProxyParam{}, err
 	}
@@ -659,4 +667,42 @@ func ReadResponseBodyLimit(resp *http.Response, maxBytes int64) ([]byte, error) 
 		return nil, &ToolError{Status: http.StatusBadGateway, Code: "response_too_large", Message: fmt.Sprintf("upstream response exceeds configured limit of %d bytes", maxBytes)}
 	}
 	return body, nil
+}
+
+// serializeContentParam encodes a `content`-declared parameter as one
+// document: JSON for JSON media types, the raw string otherwise. Path values
+// are percent-escaped, cookie values query-escaped (as oapi-codegen does),
+// and query values travel as a single key=value pair.
+func serializeContentParam(v any, spec ProxyParamSpec) (ProxyParam, error) {
+	var value string
+	if s, ok := v.(string); ok && !isJSONMediaType(spec.ContentType) {
+		value = s
+	} else {
+		buf, err := json.Marshal(v)
+		if err != nil {
+			return ProxyParam{}, err
+		}
+		value = string(buf)
+	}
+	switch spec.In {
+	case "path":
+		escaped := url.PathEscape(value)
+		if escaped == "." || escaped == ".." {
+			return ProxyParam{}, fmt.Errorf("value %q is a dot segment", escaped)
+		}
+		return ProxyParam{Value: escaped}, nil
+	case "query":
+		return ProxyParam{Value: value, Query: ProxyQuery{{Key: spec.Name, Value: value}}}, nil
+	case "cookie":
+		escaped := url.QueryEscape(value)
+		return ProxyParam{Value: escaped, Cookies: []ProxyCookie{{Name: spec.Name, Value: escaped}}}, nil
+	default:
+		return ProxyParam{Value: value}, nil
+	}
+}
+
+func isJSONMediaType(ct string) bool {
+	base, _, _ := strings.Cut(ct, ";")
+	base = strings.TrimSpace(strings.ToLower(base))
+	return base == "application/json" || strings.HasSuffix(base, "+json")
 }

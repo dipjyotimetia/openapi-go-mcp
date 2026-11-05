@@ -47,12 +47,14 @@ paths:
             operationId: findPets
             parameters:
                 - description: tags to filter by
+                  explode: false
                   in: query
                   name: tags
                   schema:
                     items:
                         type: string
                     type: array
+                  style: form
                 - description: maximum number of results to return
                   in: query
                   name: limit

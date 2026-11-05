@@ -113,7 +113,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 				defer cancel()
 			}
 			{{- range .PathParams}}
-			var {{.GoVar}} {{.GoType}}
+			var {{.GoVar}} {{.GoTypeExpr $.ClientAlias}}
 			if err := runtime.DecodePathParam(req.Arguments, "{{.Name}}", &{{.GoVar}}); err != nil {
 				return runtime.HandleError(err)
 			}
@@ -126,7 +126,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 			{{- end}}
 			{{- if .HasRequestBody}}
 			{{- if isTypedBody .RequestBodyKind}}
-			var body {{$.ClientAlias}}.{{bodyTypeName .GoName .RequestBodyKind}}
+			var body {{$.ClientAlias}}.{{bodyTypeName .GoName .RequestBodyKind .RequestContentType}}
 			if err := runtime.DecodeBody(req.Arguments, &body); err != nil {
 				return runtime.HandleError(err)
 			}
@@ -151,7 +151,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 			cookieValues := runtime.CookiePairs{}
 			{{- range .CookieParams}}
 			{
-				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}{{if .ContentType}}, ContentType: {{quote .ContentType}}{{end}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
@@ -160,7 +160,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, c {{.ClientAlias}}.{{.Cl
 				}
 			}
 			{{- end}}
-			cookieEditor := runtime.CookiePairsRequestEditor(cookieValues)
+			cookieEditor := runtime.CookieParamsRequestEditor(cookieValues)
 			{{- end}}
 			resp, err := c.{{.CallMethod}}(ctx{{callArgs .}})
 			if err != nil {
@@ -292,7 +292,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 			pathStr := {{quote .Path}}
 			{{- range .PathParams}}
 			{
-				param, _, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "path", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, true)
+				param, _, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "path", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}{{if .ContentType}}, ContentType: {{quote .ContentType}}{{end}}}, true)
 				if err != nil {
 					return runtime.HandleError(err)
 				}
@@ -303,7 +303,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 			q := runtime.ProxyQuery{}
 			{{- range .QueryParams}}
 			{
-				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "query", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "query", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}{{if .ContentType}}, ContentType: {{quote .ContentType}}{{end}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
@@ -371,7 +371,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 
 			{{- range .HeaderParams}}
 			{
-				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "header", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "header", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}{{if .ContentType}}, ContentType: {{quote .ContentType}}{{end}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
@@ -382,7 +382,7 @@ func {{.RegisterFunc}}WithProvider(s runtime.MCPServer, provider runtime.LLMProv
 			{{- end}}
 			{{- range .CookieParams}}
 			{
-				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}}, {{.Required}})
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "{{.Name}}", In: "cookie", Style: {{quote .Style}}, Explode: {{.Explode}}, AllowReserved: {{.AllowReserved}}{{if .ContentType}}, ContentType: {{quote .ContentType}}{{end}}}, {{.Required}})
 				if err != nil {
 					return runtime.HandleError(err)
 				}
@@ -664,13 +664,13 @@ func annotationsLit(op Operation) string {
 // bodyTypeName returns the oapi-codegen-generated Go type name for the typed
 // request body of a JSON or Form operation. Raw kinds do not use a typed body
 // var and never call this helper.
-func bodyTypeName(goMethod string, kind BodyKind) string {
+func bodyTypeName(goMethod string, kind BodyKind, contentType string) string {
 	base := strings.TrimSuffix(goMethod, "WithResponse")
 	switch kind {
 	case BodyForm:
 		return base + "FormdataRequestBody"
 	case BodyJSON:
-		fallthrough
+		return base + jsonBodyTag(contentType) + "RequestBody"
 	default:
 		return base + "JSONRequestBody"
 	}

@@ -94,6 +94,13 @@ regen-examples: build
 	    -package todosmcp \
 	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/todos/gen/todos
 
+	oapi-codegen -config examples/edge-cases/gen/edge/oapi.yaml examples/edge-cases/edge-cases.yaml
+	$(BIN_DIR)/$(BINARY) $(GEN_FLAGS) \
+	    -spec examples/edge-cases/edge-cases.yaml \
+	    -out examples/edge-cases/gen/edgemcp \
+	    -package edgemcp \
+	    -client-import github.com/dipjyotimetia/openapi-go-mcp/examples/edge-cases/gen/edge
+
 # Quick smoke test: initialise the petstore (go-sdk) MCP server over stdio
 # and list tools. Use `make smoke-all` to exercise both backends.
 smoke: build

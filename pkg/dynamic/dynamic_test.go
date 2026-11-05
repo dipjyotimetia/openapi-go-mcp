@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -650,4 +651,72 @@ func mapsKeys[V any](m map[string]V) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func TestRegister_ContentParamsAreJSONEncoded(t *testing.T) {
+	t.Parallel()
+
+	want := `{"kind":"a b","n":1}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, _ := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/c/")); got != want {
+			t.Errorf("path value = %q, want %q", got, want)
+		}
+		if got := r.URL.Query().Get("q"); got != want {
+			t.Errorf("query q = %q, want %q", got, want)
+		}
+		if got := r.Header.Get("X-H"); got != want {
+			t.Errorf("header X-H = %q, want %q", got, want)
+		}
+		cookie, err := r.Cookie("ck")
+		if err != nil {
+			t.Fatalf("cookie ck: %v", err)
+		}
+		if got, _ := url.QueryUnescape(cookie.Value); got != want {
+			t.Errorf("cookie ck = %q, want %q", got, want)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	specPath := filepath.Join(t.TempDir(), "content.yaml")
+	spec := fmt.Sprintf(`openapi: 3.0.3
+info: {title: Content, version: "1"}
+servers: [{url: %q}]
+paths:
+  /c/{p}:
+    get:
+      operationId: contentParams
+      parameters:
+        - {name: p, in: path, required: true, content: {application/json: {schema: {$ref: '#/components/schemas/F'}}}}
+        - {name: q, in: query, content: {application/json: {schema: {$ref: '#/components/schemas/F'}}}}
+        - {name: X-H, in: header, content: {application/json: {schema: {$ref: '#/components/schemas/F'}}}}
+        - {name: ck, in: cookie, content: {application/json: {schema: {$ref: '#/components/schemas/F'}}}}
+      responses: {"204": {description: ok}}
+components:
+  schemas:
+    F: {type: object, properties: {kind: {type: string}, n: {type: integer}}}
+`, upstream.URL)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{}
+	if err := dynamic.Register(context.Background(), server, specPath, dynamic.Config{
+		UpstreamHTTPClient: upstream.Client(),
+		RequestTimeout:     time.Second,
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	f := map[string]any{"kind": "a b", "n": 1}
+	result, err := server.handlers["contentParams"](context.Background(), &runtime.CallToolRequest{Arguments: map[string]any{
+		"path":   map[string]any{"p": f},
+		"query":  map[string]any{"q": f},
+		"header": map[string]any{"X-H": f},
+		"cookie": map[string]any{"ck": f},
+	}})
+	if err != nil {
+		t.Fatalf("handler() error = %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool error: %s", result.Text)
+	}
 }

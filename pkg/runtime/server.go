@@ -146,11 +146,33 @@ func NewToolResultText(text string) *CallToolResult {
 // the buffer directly (no defensive copy) so generated handlers don't pay a
 // memcpy on every API call. Generated code passes resp.Body which oapi-codegen
 // allocates fresh per request, so this is safe in practice.
+//
+// StructuredContent is set only when the payload is a JSON object: MCP
+// requires structuredContent to be an object, so arrays, scalars and null
+// are surfaced as text only.
 func NewToolResultJSON(jsonBytes []byte) *CallToolResult {
-	return &CallToolResult{
-		Text:              string(jsonBytes),
-		StructuredContent: json.RawMessage(jsonBytes),
+	res := &CallToolResult{Text: string(jsonBytes)}
+	if isJSONObject(jsonBytes) {
+		res.StructuredContent = json.RawMessage(jsonBytes)
 	}
+	return res
+}
+
+// isJSONObject reports whether b is a JSON document whose root is an object.
+// It inspects only the first non-whitespace byte; malformed JSON is caught
+// later by the MCP SDK's own marshalling.
+func isJSONObject(b []byte) bool {
+	for _, c := range b {
+		switch c {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // NewToolResultBinary creates a backwards-compatible base64 text envelope for
@@ -215,7 +237,8 @@ func NewToolResultError(text string) *CallToolResult {
 //
 // Decoding strategy:
 //   - 2xx with a JSON Content-Type (or "+json" suffix): body is wrapped as
-//     structured JSON via the same shape NewToolResultJSON produces.
+//     structured JSON via the same shape NewToolResultJSON produces (object
+//     roots only; arrays and scalars are text-only, as MCP requires).
 //   - 2xx with an image/* or audio/* Content-Type: body is surfaced as a
 //     native MCP ImageContent / AudioContent block (the shape
 //     NewToolResultImage / NewToolResultAudio produce) so clients can render
@@ -250,12 +273,10 @@ func NewToolResultFromHTTP(status int, header http.Header, body []byte, fallback
 		}
 		switch class {
 		case ctJSON:
-			return &CallToolResult{
-				Text:              string(body),
-				StructuredContent: json.RawMessage(body),
-				StatusCode:        status,
-				Headers:           headers,
-			}
+			res := NewToolResultJSON(body)
+			res.StatusCode = status
+			res.Headers = headers
+			return res
 		case ctText:
 			// text/* surfaces verbatim — base64 would obscure the content for
 			// the LLM consumer.

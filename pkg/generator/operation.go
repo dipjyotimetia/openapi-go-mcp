@@ -104,7 +104,7 @@ type Operation struct {
 	// emit struct fields for cookies); instead the generator wires them
 	// through a RequestEditorFn that calls req.AddCookie() per cookie.
 	CookieParams []ParamField
-	// HasParamsStruct is true when at least one query or header param exists,
+	// HasParamsStruct is true when at least one query, header, or cookie param exists,
 	// meaning oapi-codegen emitted a <Op>Params struct that the typed method
 	// expects as an additional argument.
 	HasParamsStruct bool
@@ -169,7 +169,16 @@ type ParamField struct {
 	GoVar        string // Go local variable name, e.g. "petId"
 	GoType       string // Go type, e.g. "int64", "openapi_types.UUID"
 	GoTypeImport string // import path required for GoType (empty for builtins)
-	Required     bool
+	// GoTypeImportAlias is the import alias for GoTypeImport (from
+	// x-go-type-import's "name"); empty means the package's own name.
+	GoTypeImportAlias string
+	// GoTypeQualified marks GoType as declared in the oapi-codegen client
+	// package (inline enums, x-go-type-name, $ref'd components), so it must
+	// be qualified with the client alias. Only resolved for path params.
+	GoTypeQualified bool
+	// GoTypeSliceDepth is the number of "[]" prefixes (array path params).
+	GoTypeSliceDepth int
+	Required         bool
 	// Style, Explode, and AllowReserved are the wire-format metadata used by
 	// proxy mode. Style and Explode are resolved to their OpenAPI defaults
 	// while collecting the operation, so templates never need to infer them.
@@ -177,6 +186,10 @@ type ParamField struct {
 	Explode       bool
 	AllowReserved bool
 	Schema        *openapi3.SchemaRef // original parameter schema, used to build the input schema
+	// ContentType is set for parameters declared with `content` instead of
+	// `schema`; Schema then holds the media type's schema and the value is
+	// serialized as a JSON document rather than with style/explode rules.
+	ContentType string
 	// Description/Example/Deprecated carry Parameter-object-level metadata
 	// (as opposed to metadata on the parameter's schema). Merged into the
 	// tool input schema when the schema itself doesn't already declare the
@@ -417,16 +430,19 @@ func collectOperationParams(out *Operation, item *openapi3.PathItem, op *openapi
 				fmt.Sprintf("path parameter %q is referenced in the URL but has no parameter definition; treating as a required string", name))
 		}
 		f := paramFieldFromSpec(name, p, true)
-		f.GoVar = pathGoVar(f.GoVar)
+		applyPathParamGoType(&f, strings.TrimSuffix(out.GoName, "WithResponse"), declaredOn(op.Parameters, p))
 		out.PathParams = append(out.PathParams, f)
 		if p != nil && opts.Mode == ModeProxy {
 			emitParameterStyleDiagnostic(p, opPath, sink)
 		}
 	}
+	assignPathParamGoVars(out.PathParams, opts.ClientImport, pathGoVar)
 	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink, opts.Mode == ModeProxy)
 	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink, opts.Mode == ModeProxy)
 	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink, opts.Mode == ModeProxy)
-	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
+	// oapi-codegen's <Op>Params struct also carries cookie params, so its
+	// pointer is part of the client signature whenever any of the three exist.
+	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams)+len(out.CookieParams) > 0
 }
 
 // emitOperationDiagnostics reports operation features the generated tool does
@@ -465,7 +481,7 @@ func applyRequestBody(out *Operation, op *openapi3.Operation, opPath string, opt
 	out.HasRequestBody = true
 	out.RequestBodyKind = kind
 	out.RequestContentType = ct
-	out.CallMethod = callMethodFor(out.GoName, kind)
+	out.CallMethod = callMethodFor(out.GoName, kind, ct)
 	// Typed kinds keep the schema for input-schema lowering and
 	// (multipart) binary-field rewriting. Raw kinds intentionally
 	// drop the spec schema — the MCP input is a single base64 /
@@ -826,8 +842,11 @@ func paramFieldFromSpec(name string, p *openapi3.Parameter, required bool) Param
 		Required: required,
 	}
 	if p != nil {
-		f.GoType, f.GoTypeImport = goTypeForSchema(p.Schema)
 		f.Schema = p.Schema
+		if f.Schema == nil && len(p.Content) > 0 {
+			_, f.ContentType, f.Schema = pickRequestContent(p.Content, "")
+		}
+		f.GoType, f.GoTypeImport = goTypeForSchema(f.Schema)
 		f.Description = p.Description
 		f.Example = p.Example
 		f.Deprecated = p.Deprecated
@@ -867,7 +886,7 @@ func parameterExplode(p *openapi3.Parameter, style string) bool {
 // declares one or more bodies. When prefer is non-empty and present in c, it
 // wins; otherwise the priority is fixed and deterministic:
 //
-//  1. application/json (and any *+json variant) — preferred.
+//  1. application/json, then any *+json variant (sorted) — preferred.
 //  2. application/x-www-form-urlencoded
 //  3. multipart/form-data
 //  4. application/octet-stream
@@ -891,7 +910,11 @@ func pickRequestContent(c openapi3.Content, prefer string) (BodyKind, string, *o
 	}
 	keys := contentKeys(c) // sorted
 
-	// 1. JSON family.
+	// 1. JSON family. Exact application/json wins over *+json variants so the
+	// call goes through oapi-codegen's default <Op>WithResponse method.
+	if mt, ok := c["application/json"]; ok {
+		return BodyJSON, "application/json", schemaOf(mt)
+	}
 	for _, ct := range keys {
 		if loader.IsJSONContentType(ct) {
 			return BodyJSON, ct, schemaOf(c[ct])
@@ -1287,7 +1310,9 @@ func mergeParamMetadata(schema map[string]any, f ParamField) {
 
 func goMethodName(operationID, method, path string) string {
 	if operationID == "" {
-		operationID = method + " " + path
+		// oapi-codegen derives "<method>-<path segments>" with a lower-case
+		// method, so GET /pets/{id} becomes GetPetsId (not GETPetsId).
+		operationID = strings.ToLower(method) + " " + path
 	}
 	return PascalCase(operationID) + "WithResponse"
 }
@@ -1296,8 +1321,13 @@ func goMethodName(operationID, method, path string) string {
 // handler invokes for the given body kind. The Go name of an operation is
 // always "<Base>WithResponse"; non-JSON kinds dispatch to differently-named
 // helpers that oapi-codegen emits on the same client interface.
-func callMethodFor(goName string, kind BodyKind) string {
+func callMethodFor(goName string, kind BodyKind, contentType string) string {
 	switch kind {
+	case BodyJSON:
+		if tag := jsonBodyTag(contentType); tag != "JSON" {
+			return strings.TrimSuffix(goName, "WithResponse") + "With" + tag + "BodyWithResponse"
+		}
+		return goName
 	case BodyForm:
 		base := strings.TrimSuffix(goName, "WithResponse")
 		return base + "WithFormdataBodyWithResponse"
@@ -1430,16 +1460,18 @@ func goTypeForSchema(ref *openapi3.SchemaRef) (goType, importPath string) {
 			return "openapi_types.Date", oapiTypesImport
 		case "date-time":
 			return "time.Time", "time"
+		case "byte":
+			return "[]byte", ""
+		case "binary":
+			return "openapi_types.File", oapiTypesImport
 		}
 		return "string", ""
 	case "boolean":
 		return "bool", ""
 	case "integer":
 		switch s.Format {
-		case "int64":
-			return "int64", ""
-		case "int32":
-			return "int32", ""
+		case "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64":
+			return s.Format, ""
 		}
 		return "int", ""
 	case "number":

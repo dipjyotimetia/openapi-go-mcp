@@ -1,0 +1,5 @@
+package: edge
+generate:
+  models: true
+  client: true
+output: examples/edge-cases/gen/edge/edge.gen.go

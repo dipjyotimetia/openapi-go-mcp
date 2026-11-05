@@ -40,7 +40,7 @@ func TestRender_CookieParams_EndToEnd(t *testing.T) {
 		`runtime.CookiePairs{}`,
 		`runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "session", In: "cookie"`,
 		`runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "csrf", In: "cookie"`,
-		`runtime.CookiePairsRequestEditor(cookieValues)`,
+		`runtime.CookieParamsRequestEditor(cookieValues)`,
 		"cookieEditor", // passed as trailing arg
 	} {
 		if !strings.Contains(string(src), want) {
