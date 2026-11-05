@@ -31,6 +31,11 @@ func docWith(t *testing.T, path string, mutate func(*openapi3.Operation, *openap
 		OpenAPI: "3.0.0",
 		Info:    &openapi3.Info{Title: "Diag", Version: "1"},
 		Paths:   &openapi3.Paths{},
+		// Security requirements must reference a declared scheme
+		// (kin-openapi >= v0.152 validates this).
+		Components: &openapi3.Components{SecuritySchemes: openapi3.SecuritySchemes{
+			"bearerAuth": {Value: openapi3.NewJWTSecurityScheme()},
+		}},
 	}
 	doc.Paths.Set(path, item)
 	if err := doc.Validate(context.Background()); err != nil {
