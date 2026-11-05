@@ -104,7 +104,7 @@ type Operation struct {
 	// emit struct fields for cookies); instead the generator wires them
 	// through a RequestEditorFn that calls req.AddCookie() per cookie.
 	CookieParams []ParamField
-	// HasParamsStruct is true when at least one query or header param exists,
+	// HasParamsStruct is true when at least one query, header, or cookie param exists,
 	// meaning oapi-codegen emitted a <Op>Params struct that the typed method
 	// expects as an additional argument.
 	HasParamsStruct bool
@@ -186,6 +186,10 @@ type ParamField struct {
 	Explode       bool
 	AllowReserved bool
 	Schema        *openapi3.SchemaRef // original parameter schema, used to build the input schema
+	// ContentType is set for parameters declared with `content` instead of
+	// `schema`; Schema then holds the media type's schema and the value is
+	// serialized as a JSON document rather than with style/explode rules.
+	ContentType string
 	// Description/Example/Deprecated carry Parameter-object-level metadata
 	// (as opposed to metadata on the parameter's schema). Merged into the
 	// tool input schema when the schema itself doesn't already declare the
@@ -436,7 +440,9 @@ func collectOperationParams(out *Operation, item *openapi3.PathItem, op *openapi
 	out.QueryParams = collectParamsWithDiagnostics(paramByIn[inQuery], opPath, sink, opts.Mode == ModeProxy)
 	out.HeaderParams = collectParamsWithDiagnostics(paramByIn[inHeader], opPath, sink, opts.Mode == ModeProxy)
 	out.CookieParams = collectParamsWithDiagnostics(paramByIn[inCookie], opPath, sink, opts.Mode == ModeProxy)
-	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams) > 0
+	// oapi-codegen's <Op>Params struct also carries cookie params, so its
+	// pointer is part of the client signature whenever any of the three exist.
+	out.HasParamsStruct = len(out.QueryParams)+len(out.HeaderParams)+len(out.CookieParams) > 0
 }
 
 // emitOperationDiagnostics reports operation features the generated tool does
@@ -836,8 +842,11 @@ func paramFieldFromSpec(name string, p *openapi3.Parameter, required bool) Param
 		Required: required,
 	}
 	if p != nil {
-		f.GoType, f.GoTypeImport = goTypeForSchema(p.Schema)
 		f.Schema = p.Schema
+		if f.Schema == nil && len(p.Content) > 0 {
+			_, f.ContentType, f.Schema = pickRequestContent(p.Content, "")
+		}
+		f.GoType, f.GoTypeImport = goTypeForSchema(f.Schema)
 		f.Description = p.Description
 		f.Example = p.Example
 		f.Deprecated = p.Deprecated

@@ -66,3 +66,34 @@ func CookiePairsRequestEditor(values CookiePairs) func(ctx context.Context, req 
 		return nil
 	}
 }
+
+// CookieParamsRequestEditor is CookiePairsRequestEditor for companion-mode
+// handlers. oapi-codegen's request builder always serializes required
+// cookie fields of the <Op>Params struct, which generated code leaves at
+// their zero value; this editor first removes any cookie already on the
+// request whose name appears in values, so the tool argument is sent once
+// instead of alongside an empty duplicate. Cookies with other names (for
+// example ones set by client-level request editors) are preserved.
+func CookieParamsRequestEditor(values CookiePairs) func(ctx context.Context, req *http.Request) error {
+	return func(_ context.Context, req *http.Request) error {
+		if len(values) == 0 {
+			return nil
+		}
+		replace := make(map[string]struct{}, len(values))
+		for _, v := range values {
+			replace[v.Name] = struct{}{}
+		}
+		existing := req.Cookies()
+		req.Header.Del("Cookie")
+		for _, c := range existing {
+			if _, drop := replace[c.Name]; drop {
+				continue
+			}
+			req.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value}) // #nosec G124
+		}
+		for _, v := range values {
+			req.AddCookie(&http.Cookie{Name: v.Name, Value: v.Value}) // #nosec G124
+		}
+		return nil
+	}
+}

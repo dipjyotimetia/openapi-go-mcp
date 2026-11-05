@@ -86,6 +86,53 @@ func RegisterEdgeCasesAPIClientWithProvider(s runtime.MCPServer, c edge.ClientWi
 		},
 	)
 
+	// GET /cookie-only
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "cookieOnly",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_cookieOnly, input_openai_cookieOnly),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			var params edge.CookieOnlyParams
+			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
+				return runtime.HandleError(err)
+			}
+			cookieValues := runtime.CookiePairs{}
+			{
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "session", In: "cookie", Style: "form", Explode: true, AllowReserved: false}, true)
+				if err != nil {
+					return runtime.HandleError(err)
+				}
+				if present {
+					cookieValues = append(cookieValues, param.Cookies...)
+				}
+			}
+			cookieEditor := runtime.CookieParamsRequestEditor(cookieValues)
+			resp, err := c.CookieOnlyWithResponse(ctx, &params, cookieEditor)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"",
+			), nil
+		},
+	)
+
 	// POST /documents
 	s.AddTool(
 		runtime.ApplyConfig(runtime.Tool{
@@ -258,6 +305,274 @@ func RegisterEdgeCasesAPIClientWithProvider(s runtime.MCPServer, c edge.ClientWi
 				headerOf(resp.HTTPResponse),
 				resp.Body,
 				"application/json",
+			), nil
+		},
+	)
+
+	// GET /responses/array
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "listNames",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_listNames, input_openai_listNames),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			resp, err := c.ListNamesWithResponse(ctx)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
+		},
+	)
+
+	// POST /responses/created
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "createOrFetch",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_createOrFetch, input_openai_createOrFetch),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_createOrFetch),
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			resp, err := c.CreateOrFetchWithResponse(ctx)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
+		},
+	)
+
+	// GET /responses/scalar
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "getCount",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getCount, input_openai_getCount),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			resp, err := c.GetCountWithResponse(ctx)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
+		},
+	)
+
+	// GET /responses/text
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "getText",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getText, input_openai_getText),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			resp, err := c.GetTextWithResponse(ctx)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"text/plain",
+			), nil
+		},
+	)
+
+	// GET /responses/vendor
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "getVendor",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getVendor, input_openai_getVendor),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_getVendor),
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			resp, err := c.GetVendorWithResponse(ctx)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/vnd.api+json",
+			), nil
+		},
+	)
+
+	// GET /search/{selector}
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "search",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_search, input_openai_search),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			var selector edge.Selector
+			if err := runtime.DecodePathParam(req.Arguments, "selector", &selector); err != nil {
+				return runtime.HandleError(err)
+			}
+			var params edge.SearchParams
+			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
+				return runtime.HandleError(err)
+			}
+			cookieValues := runtime.CookiePairs{}
+			{
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "pageCursor", In: "cookie", Style: "form", Explode: true, AllowReserved: false, ContentType: "application/json"}, false)
+				if err != nil {
+					return runtime.HandleError(err)
+				}
+				if present {
+					cookieValues = append(cookieValues, param.Cookies...)
+				}
+			}
+			cookieEditor := runtime.CookieParamsRequestEditor(cookieValues)
+			resp, err := c.SearchWithResponse(ctx, selector, &params, cookieEditor)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"",
+			), nil
+		},
+	)
+
+	// GET /sessions
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "getSession",
+			Description:       "",
+			RawInputSchema:    inputSchemaForProvider(provider, input_getSession, input_openai_getSession),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			Annotations:       &runtime.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			var params edge.GetSessionParams
+			if err := runtime.DecodeParamsCombined(req.Arguments, &params); err != nil {
+				return runtime.HandleError(err)
+			}
+			cookieValues := runtime.CookiePairs{}
+			{
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "session", In: "cookie", Style: "form", Explode: true, AllowReserved: false}, true)
+				if err != nil {
+					return runtime.HandleError(err)
+				}
+				if present {
+					cookieValues = append(cookieValues, param.Cookies...)
+				}
+			}
+			{
+				param, present, err := runtime.SerializeProxyParam(req.Arguments, runtime.ProxyParamSpec{Name: "theme", In: "cookie", Style: "form", Explode: true, AllowReserved: false}, false)
+				if err != nil {
+					return runtime.HandleError(err)
+				}
+				if present {
+					cookieValues = append(cookieValues, param.Cookies...)
+				}
+			}
+			cookieEditor := runtime.CookieParamsRequestEditor(cookieValues)
+			resp, err := c.GetSessionWithResponse(ctx, &params, cookieEditor)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"",
 			), nil
 		},
 	)
@@ -511,6 +826,48 @@ const input_openai_getBatch = `{
   },
   "required": [
     "path"
+  ],
+  "type": "object"
+}`
+
+const input_cookieOnly = `{
+  "properties": {
+    "cookie": {
+      "properties": {
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "cookie"
+  ],
+  "type": "object"
+}`
+
+const input_openai_cookieOnly = `{
+  "additionalProperties": false,
+  "properties": {
+    "cookie": {
+      "additionalProperties": false,
+      "properties": {
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "cookie"
   ],
   "type": "object"
 }`
@@ -932,6 +1289,483 @@ const output_patchResource = `{
     }
   ],
   "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
+const input_listNames = `{
+  "properties": {},
+  "type": "object"
+}`
+
+const input_openai_listNames = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "type": "object"
+}`
+
+const input_createOrFetch = `{
+  "properties": {},
+  "type": "object"
+}`
+
+const input_openai_createOrFetch = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "type": "object"
+}`
+
+const output_createOrFetch = `{
+  "$defs": {
+    "PetStatus": {
+      "enum": [
+        "available",
+        "sold"
+      ],
+      "type": "string"
+    },
+    "Resource": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PetStatus"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Resource"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
+const input_getCount = `{
+  "properties": {},
+  "type": "object"
+}`
+
+const input_openai_getCount = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "type": "object"
+}`
+
+const input_getText = `{
+  "properties": {},
+  "type": "object"
+}`
+
+const input_openai_getText = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "type": "object"
+}`
+
+const input_getVendor = `{
+  "properties": {},
+  "type": "object"
+}`
+
+const input_openai_getVendor = `{
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "type": "object"
+}`
+
+const output_getVendor = `{
+  "$defs": {
+    "PetStatus": {
+      "enum": [
+        "available",
+        "sold"
+      ],
+      "type": "string"
+    },
+    "Resource": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PetStatus"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/Resource"
+    }
+  ],
+  "description": "Describes the tool's success payload. Error results (isError=true) instead carry a {status, headers, body} envelope; empty upstream bodies produce no structured content.",
+  "type": "object"
+}`
+
+const input_search = `{
+  "$defs": {
+    "Selector": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "properties": {
+    "cookie": {
+      "properties": {
+        "pageCursor": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "type": "object"
+    },
+    "header": {
+      "properties": {
+        "X-Selector": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "type": "object"
+    },
+    "path": {
+      "properties": {
+        "selector": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "required": [
+        "selector"
+      ],
+      "type": "object"
+    },
+    "query": {
+      "properties": {
+        "filter": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+
+const input_openai_search = `{
+  "additionalProperties": false,
+  "properties": {
+    "cookie": {
+      "additionalProperties": false,
+      "properties": {
+        "pageCursor": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "limit"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "pageCursor"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "X-Selector": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "limit"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "X-Selector"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "path": {
+      "additionalProperties": false,
+      "properties": {
+        "selector": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "limit"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "selector"
+      ],
+      "type": "object"
+    },
+    "query": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "limit"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "filter"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "cookie",
+    "header",
+    "path",
+    "query"
+  ],
+  "type": "object"
+}`
+
+const input_getSession = `{
+  "properties": {
+    "cookie": {
+      "properties": {
+        "session": {
+          "type": "string"
+        },
+        "theme": {
+          "enum": [
+            "dark",
+            "light"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "header": {
+      "properties": {
+        "X-Count": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "X-Flag": {
+          "type": "boolean"
+        },
+        "X-Mode": {
+          "enum": [
+            "fast",
+            "slow"
+          ],
+          "type": "string"
+        },
+        "X-Request-Id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "X-Tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "X-Request-Id"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "header",
+    "cookie"
+  ],
+  "type": "object"
+}`
+
+const input_openai_getSession = `{
+  "additionalProperties": false,
+  "properties": {
+    "cookie": {
+      "additionalProperties": false,
+      "properties": {
+        "session": {
+          "type": "string"
+        },
+        "theme": {
+          "enum": [
+            "dark",
+            "light",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "theme"
+      ],
+      "type": "object"
+    },
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "X-Count": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "X-Flag": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "X-Mode": {
+          "enum": [
+            "fast",
+            "slow",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "X-Request-Id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "X-Tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "X-Count",
+        "X-Flag",
+        "X-Mode",
+        "X-Request-Id",
+        "X-Tags"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "cookie",
+    "header"
+  ],
   "type": "object"
 }`
 

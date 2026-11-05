@@ -395,6 +395,7 @@ func buildRequest(ctx context.Context, op generator.Operation, baseURL string, s
 	for _, param := range op.PathParams {
 		serialized, _, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
 			Name: param.Name, In: "path", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+			ContentType: param.ContentType,
 		}, true)
 		if err != nil {
 			return nil, err
@@ -405,6 +406,7 @@ func buildRequest(ctx context.Context, op generator.Operation, baseURL string, s
 	for _, param := range op.QueryParams {
 		serialized, present, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
 			Name: param.Name, In: "query", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+			ContentType: param.ContentType,
 		}, param.Required)
 		if err != nil {
 			return nil, err
@@ -435,6 +437,7 @@ func buildRequest(ctx context.Context, op generator.Operation, baseURL string, s
 	for _, param := range op.HeaderParams {
 		serialized, present, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
 			Name: param.Name, In: "header", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+			ContentType: param.ContentType,
 		}, param.Required)
 		if err != nil {
 			return nil, err
@@ -446,6 +449,7 @@ func buildRequest(ctx context.Context, op generator.Operation, baseURL string, s
 	for _, param := range op.CookieParams {
 		serialized, present, err := runtime.SerializeProxyParam(args, runtime.ProxyParamSpec{
 			Name: param.Name, In: "cookie", Style: param.Style, Explode: param.Explode, AllowReserved: param.AllowReserved,
+			ContentType: param.ContentType,
 		}, param.Required)
 		if err != nil {
 			return nil, err

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for PetStatus.
@@ -163,6 +164,42 @@ func (e FindPetsParamsKind) Valid() bool {
 	}
 }
 
+// Defines values for GetSessionParamsXMode.
+const (
+	Fast GetSessionParamsXMode = "fast"
+	Slow GetSessionParamsXMode = "slow"
+)
+
+// Valid indicates whether the value is a known member of the GetSessionParamsXMode enum.
+func (e GetSessionParamsXMode) Valid() bool {
+	switch e {
+	case Fast:
+		return true
+	case Slow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetSessionParamsTheme.
+const (
+	Dark  GetSessionParamsTheme = "dark"
+	Light GetSessionParamsTheme = "light"
+)
+
+// Valid indicates whether the value is a known member of the GetSessionParamsTheme enum.
+func (e GetSessionParamsTheme) Valid() bool {
+	switch e {
+	case Dark:
+		return true
+	case Light:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SetTicketStatusParamsStatus.
 const (
 	Apple  SetTicketStatusParamsStatus = "Apple"
@@ -190,11 +227,27 @@ type Resource struct {
 	Status *PetStatus `json:"status,omitempty"`
 }
 
+// Selector defines model for Selector.
+type Selector struct {
+	Kind  *string `json:"kind,omitempty"`
+	Limit *int    `json:"limit,omitempty"`
+}
+
 // KindParam defines model for KindParam.
 type KindParam string
 
+// NotFound defines model for NotFound.
+type NotFound struct {
+	Message *string `json:"message,omitempty"`
+}
+
 // GetBatchParamsTags defines parameters for GetBatch.
 type GetBatchParamsTags string
+
+// CookieOnlyParams defines parameters for CookieOnly.
+type CookieOnlyParams struct {
+	Session string `form:"session" json:"session"`
+}
 
 // NamedChoice defines parameters for GetFormats.
 type NamedChoice string
@@ -215,6 +268,30 @@ type FindPetsParamsTicketKind string
 
 // FindPetsParamsKind defines parameters for FindPets.
 type FindPetsParamsKind string
+
+// SearchParams defines parameters for Search.
+type SearchParams struct {
+	Filter     *Selector `form:"filter,omitempty" json:"filter,omitempty"`
+	XSelector  *Selector `json:"X-Selector,omitempty"`
+	PageCursor *Selector `form:"pageCursor,omitempty" json:"pageCursor,omitempty"`
+}
+
+// GetSessionParams defines parameters for GetSession.
+type GetSessionParams struct {
+	XRequestId openapi_types.UUID     `json:"X-Request-Id"`
+	XCount     *int32                 `json:"X-Count,omitempty"`
+	XMode      *GetSessionParamsXMode `json:"X-Mode,omitempty"`
+	XTags      *[]string              `json:"X-Tags,omitempty"`
+	XFlag      *bool                  `json:"X-Flag,omitempty"`
+	Session    string                 `form:"session" json:"session"`
+	Theme      *GetSessionParamsTheme `form:"theme,omitempty" json:"theme,omitempty"`
+}
+
+// GetSessionParamsXMode defines parameters for GetSession.
+type GetSessionParamsXMode string
+
+// GetSessionParamsTheme defines parameters for GetSession.
+type GetSessionParamsTheme string
 
 // SetTicketStatusParamsStatus defines parameters for SetTicketStatus.
 type SetTicketStatusParamsStatus string
@@ -304,6 +381,9 @@ type ClientInterface interface {
 	// GetBatch request
 	GetBatch(ctx context.Context, ids []int64, tags []GetBatchParamsTags, states []PetStatus, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CookieOnly request
+	CookieOnly(ctx context.Context, params *CookieOnlyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateDocumentWithBody request with any body
 	CreateDocumentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -322,6 +402,27 @@ type ClientInterface interface {
 
 	PatchResourceWithApplicationMergePatchPlusJSONBody(ctx context.Context, id int, body PatchResourceApplicationMergePatchPlusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListNames request
+	ListNames(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOrFetch request
+	CreateOrFetch(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCount request
+	GetCount(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetText request
+	GetText(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVendor request
+	GetVendor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Search request
+	Search(ctx context.Context, selector Selector, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSession request
+	GetSession(ctx context.Context, params *GetSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ShadowNames request
 	ShadowNames(ctx context.Context, pType string, resp string, body string, json string, cfg string, edge string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -334,6 +435,18 @@ type ClientInterface interface {
 
 func (c *Client) GetBatch(ctx context.Context, ids []int64, tags []GetBatchParamsTags, states []PetStatus, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetBatchRequest(c.Server, ids, tags, states)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CookieOnly(ctx context.Context, params *CookieOnlyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCookieOnlyRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -428,6 +541,90 @@ func (c *Client) PatchResourceWithApplicationMergePatchPlusJSONBody(ctx context.
 	return c.Client.Do(req)
 }
 
+func (c *Client) ListNames(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListNamesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateOrFetch(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOrFetchRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCount(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCountRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetText(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTextRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetVendor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVendorRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) Search(ctx context.Context, selector Selector, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchRequest(c.Server, selector, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSession(ctx context.Context, params *GetSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ShadowNames(ctx context.Context, pType string, resp string, body string, json string, cfg string, edge string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewShadowNamesRequest(c.Server, pType, resp, body, json, cfg, edge)
 	if err != nil {
@@ -509,6 +706,49 @@ func NewGetBatchRequest(server string, ids []int64, tags []GetBatchParamsTags, s
 		return nil, err
 	}
 
+	return req, nil
+}
+
+// NewCookieOnlyRequest generates requests for CookieOnly
+func NewCookieOnlyRequest(server string, params *CookieOnlyParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cookie-only")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var cookieParam0 string
+
+		cookieParam0, err = runtime.StyleParamWithOptions("simple", true, "session", params.Session, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationCookie, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		cookie0 := &http.Cookie{
+			Name:  "session",
+			Value: cookieParam0,
+		}
+		req.AddCookie(cookie0)
+
+	}
 	return req, nil
 }
 
@@ -747,6 +987,352 @@ func NewPatchResourceRequestWithBody(server string, id int, contentType string, 
 	return req, nil
 }
 
+// NewListNamesRequest generates requests for ListNames
+func NewListNamesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/responses/array")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateOrFetchRequest generates requests for CreateOrFetch
+func NewCreateOrFetchRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/responses/created")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCountRequest generates requests for GetCount
+func NewGetCountRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/responses/scalar")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetTextRequest generates requests for GetText
+func NewGetTextRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/responses/text")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVendorRequest generates requests for GetVendor
+func NewGetVendorRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/responses/vendor")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSearchRequest generates requests for Search
+func NewSearchRequest(server string, selector Selector, params *SearchParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	var pathParamBuf0 []byte
+	pathParamBuf0, err = json.Marshal(selector)
+	if err != nil {
+		return nil, err
+	}
+	pathParam0 = string(pathParamBuf0)
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/search/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Filter != nil {
+
+			if queryParamBuf, err := json.Marshal(*params.Filter); err != nil {
+				return nil, err
+			} else {
+				queryValues.Add("filter", string(queryParamBuf))
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XSelector != nil {
+			var headerParam0 string
+
+			var headerParamBuf0 []byte
+			headerParamBuf0, err = json.Marshal(*params.XSelector)
+			if err != nil {
+				return nil, err
+			}
+			headerParam0 = string(headerParamBuf0)
+
+			req.Header.Set("X-Selector", headerParam0)
+		}
+
+	}
+
+	if params != nil {
+
+		if params.PageCursor != nil {
+			var cookieParam0 string
+
+			var cookieParamBuf0 []byte
+			cookieParamBuf0, err = json.Marshal(*params.PageCursor)
+			if err != nil {
+				return nil, err
+			}
+			cookieParam0 = url.QueryEscape(string(cookieParamBuf0))
+
+			cookie0 := &http.Cookie{
+				Name:  "pageCursor",
+				Value: cookieParam0,
+			}
+			req.AddCookie(cookie0)
+		}
+	}
+	return req, nil
+}
+
+// NewGetSessionRequest generates requests for GetSession
+func NewGetSessionRequest(server string, params *GetSessionParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/sessions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: "uuid"})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Request-Id", headerParam0)
+
+		if params.XCount != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-Count", *params.XCount, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "integer", Format: "int32"})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Count", headerParam1)
+		}
+
+		if params.XMode != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-Mode", *params.XMode, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Mode", headerParam2)
+		}
+
+		if params.XTags != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "X-Tags", *params.XTags, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "array", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tags", headerParam3)
+		}
+
+		if params.XFlag != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "X-Flag", *params.XFlag, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "boolean", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Flag", headerParam4)
+		}
+
+	}
+
+	if params != nil {
+
+		var cookieParam0 string
+
+		cookieParam0, err = runtime.StyleParamWithOptions("simple", true, "session", params.Session, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationCookie, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		cookie0 := &http.Cookie{
+			Name:  "session",
+			Value: cookieParam0,
+		}
+		req.AddCookie(cookie0)
+
+		if params.Theme != nil {
+			var cookieParam1 string
+
+			cookieParam1, err = runtime.StyleParamWithOptions("simple", true, "theme", *params.Theme, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationCookie, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			cookie1 := &http.Cookie{
+				Name:  "theme",
+				Value: cookieParam1,
+			}
+			req.AddCookie(cookie1)
+		}
+	}
+	return req, nil
+}
+
 // NewShadowNamesRequest generates requests for ShadowNames
 func NewShadowNamesRequest(server string, pType string, resp string, body string, json string, cfg string, edge string) (*http.Request, error) {
 	var err error
@@ -937,6 +1523,9 @@ type ClientWithResponsesInterface interface {
 	// GetBatchWithResponse request
 	GetBatchWithResponse(ctx context.Context, ids []int64, tags []GetBatchParamsTags, states []PetStatus, reqEditors ...RequestEditorFn) (*GetBatchResponse, error)
 
+	// CookieOnlyWithResponse request
+	CookieOnlyWithResponse(ctx context.Context, params *CookieOnlyParams, reqEditors ...RequestEditorFn) (*CookieOnlyResponse, error)
+
 	// CreateDocumentWithBodyWithResponse request with any body
 	CreateDocumentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentResponse, error)
 
@@ -954,6 +1543,27 @@ type ClientWithResponsesInterface interface {
 	PatchResourceWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchResourceResponse, error)
 
 	PatchResourceWithApplicationMergePatchPlusJSONBodyWithResponse(ctx context.Context, id int, body PatchResourceApplicationMergePatchPlusJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchResourceResponse, error)
+
+	// ListNamesWithResponse request
+	ListNamesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListNamesResponse, error)
+
+	// CreateOrFetchWithResponse request
+	CreateOrFetchWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateOrFetchResponse, error)
+
+	// GetCountWithResponse request
+	GetCountWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCountResponse, error)
+
+	// GetTextWithResponse request
+	GetTextWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTextResponse, error)
+
+	// GetVendorWithResponse request
+	GetVendorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVendorResponse, error)
+
+	// SearchWithResponse request
+	SearchWithResponse(ctx context.Context, selector Selector, params *SearchParams, reqEditors ...RequestEditorFn) (*SearchResponse, error)
+
+	// GetSessionWithResponse request
+	GetSessionWithResponse(ctx context.Context, params *GetSessionParams, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
 
 	// ShadowNamesWithResponse request
 	ShadowNamesWithResponse(ctx context.Context, pType string, resp string, body string, json string, cfg string, edge string, reqEditors ...RequestEditorFn) (*ShadowNamesResponse, error)
@@ -988,6 +1598,35 @@ func (r GetBatchResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetBatchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CookieOnlyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r CookieOnlyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CookieOnlyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CookieOnlyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1112,6 +1751,215 @@ func (r PatchResourceResponse) ContentType() string {
 	return ""
 }
 
+type ListNamesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]string
+}
+
+// Status returns HTTPResponse.Status
+func (r ListNamesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListNamesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListNamesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateOrFetchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Resource
+	JSON201      *Resource
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateOrFetchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateOrFetchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateOrFetchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCountResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *int
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCountResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCountResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetTextResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTextResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTextResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTextResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetVendorResponse struct {
+	Body                     []byte
+	HTTPResponse             *http.Response
+	ApplicationvndApiJSON200 *Resource
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVendorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVendorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVendorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SearchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ShadowNamesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1208,6 +2056,15 @@ func (c *ClientWithResponses) GetBatchWithResponse(ctx context.Context, ids []in
 	return ParseGetBatchResponse(rsp)
 }
 
+// CookieOnlyWithResponse request returning *CookieOnlyResponse
+func (c *ClientWithResponses) CookieOnlyWithResponse(ctx context.Context, params *CookieOnlyParams, reqEditors ...RequestEditorFn) (*CookieOnlyResponse, error) {
+	rsp, err := c.CookieOnly(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCookieOnlyResponse(rsp)
+}
+
 // CreateDocumentWithBodyWithResponse request with arbitrary body returning *CreateDocumentResponse
 func (c *ClientWithResponses) CreateDocumentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentResponse, error) {
 	rsp, err := c.CreateDocumentWithBody(ctx, contentType, body, reqEditors...)
@@ -1268,6 +2125,69 @@ func (c *ClientWithResponses) PatchResourceWithApplicationMergePatchPlusJSONBody
 	return ParsePatchResourceResponse(rsp)
 }
 
+// ListNamesWithResponse request returning *ListNamesResponse
+func (c *ClientWithResponses) ListNamesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListNamesResponse, error) {
+	rsp, err := c.ListNames(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListNamesResponse(rsp)
+}
+
+// CreateOrFetchWithResponse request returning *CreateOrFetchResponse
+func (c *ClientWithResponses) CreateOrFetchWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateOrFetchResponse, error) {
+	rsp, err := c.CreateOrFetch(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOrFetchResponse(rsp)
+}
+
+// GetCountWithResponse request returning *GetCountResponse
+func (c *ClientWithResponses) GetCountWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCountResponse, error) {
+	rsp, err := c.GetCount(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCountResponse(rsp)
+}
+
+// GetTextWithResponse request returning *GetTextResponse
+func (c *ClientWithResponses) GetTextWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTextResponse, error) {
+	rsp, err := c.GetText(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTextResponse(rsp)
+}
+
+// GetVendorWithResponse request returning *GetVendorResponse
+func (c *ClientWithResponses) GetVendorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVendorResponse, error) {
+	rsp, err := c.GetVendor(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVendorResponse(rsp)
+}
+
+// SearchWithResponse request returning *SearchResponse
+func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, selector Selector, params *SearchParams, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
+	rsp, err := c.Search(ctx, selector, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchResponse(rsp)
+}
+
+// GetSessionWithResponse request returning *GetSessionResponse
+func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, params *GetSessionParams, reqEditors ...RequestEditorFn) (*GetSessionResponse, error) {
+	rsp, err := c.GetSession(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSessionResponse(rsp)
+}
+
 // ShadowNamesWithResponse request returning *ShadowNamesResponse
 func (c *ClientWithResponses) ShadowNamesWithResponse(ctx context.Context, pType string, resp string, body string, json string, cfg string, edge string, reqEditors ...RequestEditorFn) (*ShadowNamesResponse, error) {
 	rsp, err := c.ShadowNames(ctx, pType, resp, body, json, cfg, edge, reqEditors...)
@@ -1304,6 +2224,22 @@ func ParseGetBatchResponse(rsp *http.Response) (*GetBatchResponse, error) {
 	}
 
 	response := &GetBatchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseCookieOnlyResponse parses an HTTP response from a CookieOnlyWithResponse call
+func ParseCookieOnlyResponse(rsp *http.Response) (*CookieOnlyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CookieOnlyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1390,6 +2326,172 @@ func ParsePatchResourceResponse(rsp *http.Response) (*PatchResourceResponse, err
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseListNamesResponse parses an HTTP response from a ListNamesWithResponse call
+func ParseListNamesResponse(rsp *http.Response) (*ListNamesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListNamesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateOrFetchResponse parses an HTTP response from a CreateOrFetchWithResponse call
+func ParseCreateOrFetchResponse(rsp *http.Response) (*CreateOrFetchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateOrFetchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Resource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Resource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCountResponse parses an HTTP response from a GetCountWithResponse call
+func ParseGetCountResponse(rsp *http.Response) (*GetCountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest int
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTextResponse parses an HTTP response from a GetTextWithResponse call
+func ParseGetTextResponse(rsp *http.Response) (*GetTextResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTextResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetVendorResponse parses an HTTP response from a GetVendorWithResponse call
+func ParseGetVendorResponse(rsp *http.Response) (*GetVendorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVendorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Resource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationvndApiJSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSearchResponse parses an HTTP response from a SearchWithResponse call
+func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetSessionResponse parses an HTTP response from a GetSessionWithResponse call
+func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
