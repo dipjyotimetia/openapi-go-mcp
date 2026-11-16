@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **LICENSE is the standard Apache License 2.0 text**, so GitHub's license detector can identify it. The copyright holder and year are unchanged.
+- **README** shows a generated spec-to-tool example and links the project write-up.
+
 ### Added
 
 - **Stable `x-mcp-tool-name` overrides.** Operations can publish validated, portable MCP tool names independent of `operationId`; invalid or duplicate names stop generation.
