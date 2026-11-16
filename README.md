@@ -8,10 +8,11 @@
 
 Generate a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server in Go from any OpenAPI 3.x or Swagger 2.0 specification. Every operation in the spec becomes an MCP tool that an LLM client (Claude, Cursor, VS Code, ...) can call.
 
-`openapi-go-mcp` is the OpenAPI counterpart to [`redpanda-data/protoc-gen-go-mcp`](https://github.com/redpanda-data/protoc-gen-go-mcp).
+`openapi-go-mcp` is the OpenAPI counterpart to [`redpanda-data/protoc-gen-go-mcp`](https://github.com/redpanda-data/protoc-gen-go-mcp). How it is built is written up in [From OpenAPI to MCP Server: Bridging REST APIs and AI Agents with Go](https://dipjyoti.dev/blog/2026-05-20-openapi-go-mcp/).
 
 ## Contents
 
+- [From spec to tool](#from-spec-to-tool)
 - [Features](#features)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -21,6 +22,120 @@ Generate a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) serve
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
+
+## From spec to tool
+
+Each operation in the spec becomes one MCP tool. This is the input:
+
+```yaml
+openapi: 3.0.3
+info:
+  title: Greet API
+  version: 1.0.0
+paths:
+  /hello/{name}:
+    get:
+      operationId: sayHello
+      summary: Say hello
+      description: Returns a greeting for the given name.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Name to greet.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A greeting.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+```
+
+Companion mode (the default) writes `greetmcp.mcp.go`:
+
+```bash
+openapi-go-mcp \
+    -spec greet.yaml \
+    -out gen/greetmcp \
+    -package greetmcp \
+    -client-import example.com/greet
+```
+
+The generated registration for `GET /hello/{name}`, inside `RegisterGreetAPIClientWithProvider`, is:
+
+```go
+	// GET /hello/{name}
+	s.AddTool(
+		runtime.ApplyConfig(runtime.Tool{
+			Name:              "sayHello",
+			Description:       "Say hello\n\nReturns a greeting for the given name.",
+			RawInputSchema:    inputSchemaForProvider(provider, input_sayHello, input_openai_sayHello),
+			StrictInputSchema: provider == runtime.LLMProviderOpenAI,
+			RawOutputSchema:   json.RawMessage(output_sayHello),
+			Annotations:       &runtime.ToolAnnotations{Title: "Say hello", ReadOnlyHint: true, IdempotentHint: true},
+		}, cfg),
+		func(ctx context.Context, req *runtime.CallToolRequest) (*runtime.CallToolResult, error) {
+			ctx = runtime.ApplyExtraPropertiesToContext(ctx, req.Arguments, cfg.ExtraProperties)
+			if cfg.RequestTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, cfg.RequestTimeout)
+				defer cancel()
+			}
+			var name string
+			if err := runtime.DecodePathParam(req.Arguments, "name", &name); err != nil {
+				return runtime.HandleError(err)
+			}
+			resp, err := c.SayHelloWithResponse(ctx, name)
+			if err != nil {
+				return runtime.HandleError(runtime.SanitizeUpstreamError(err))
+			}
+			if resp == nil {
+				return runtime.NewToolResultError("empty response"), nil
+			}
+			return runtime.NewToolResultFromHTTP(
+				resp.StatusCode(),
+				headerOf(resp.HTTPResponse),
+				resp.Body,
+				"application/json",
+			), nil
+		},
+	)
+
+```
+
+The tool's input schema in that file is:
+
+```go
+const input_sayHello = `{
+  "properties": {
+    "path": {
+      "properties": {
+        "name": {
+          "description": "Name to greet.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}`
+```
+
+The same file also registers `RegisterGreetAPIClient`, an OpenAI-strict variant of the schema, and an output schema for the JSON response. Proxy and dynamic modes expose this operation as the same `sayHello` tool without an `oapi-codegen` client.
 
 ## Features
 
@@ -337,6 +452,7 @@ petmcp.RegisterSwaggerPetstoreClient(s, client, runtime.WithExtraProperties(
 
 ## Documentation
 
+- [From OpenAPI to MCP Server: Bridging REST APIs and AI Agents with Go](https://dipjyoti.dev/blog/2026-05-20-openapi-go-mcp/)
 - [Usage patterns](docs/usage-patterns.md): deployment recipes (stdio, remote HTTP, multi-tenant, auth, aggregation, batch)
 - [Design decisions](docs/design-decisions.md): the non-obvious choices and why they were made
 - [Architecture](docs/architecture.md): packages, pipeline and extension points
